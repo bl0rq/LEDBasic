@@ -1,0 +1,29 @@
+{
+  "$schema": "https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/schema/library-json.json",
+  "name": "LEDBasic",
+  "version": "0.1.0",
+  "description": "A BASIC language interpreter for programming LED animations with FastLED. Includes virtual strip layering, parameter discovery, serial command handling, and example programs.",
+  "keywords": "led, fastled, basic, interpreter, animation, effects, virtual-strip",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bradb/LEDBasic.git"
+  },
+  "authors": [
+    {
+      "name": "Brad B",
+      "maintainer": true
+    }
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/bradb/LEDBasic",
+  "dependencies": {
+    "fastled/FastLED": "^3.9.0"
+  },
+  "frameworks": "arduino",
+  "platforms": ["espressif32"],
+  "headers": "LEDBasic.h",
+  "build": {
+    "srcDir": "src",
+    "includeDir": "include"
+  }
+}

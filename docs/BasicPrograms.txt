@@ -1,0 +1,226 @@
+// Example BASIC LED Animation Programs
+// Copy these into your ESP32 via Serial Monitor or modify main.cpp
+
+// Program 1: Rainbow Wave
+/*
+setup
+  brightness(128)
+  clear()
+  speed = 20
+end
+
+loop(time)
+  for i = 0 to numled()-1
+    h = (i * 360 / numled() + time / speed) % 360
+    s = 255
+    v = 255
+    setled(i, hsv(h, s, v))
+  next
+  show()
+end
+*/
+
+// Program 2: Fire Effect
+/*
+setup
+  brightness(200)
+  clear()
+end
+
+loop(time)
+  for i = 0 to numled()-1
+    heat = abs(sin(i * 0.3 + time / 100)) * 255
+    if heat > 200
+      r = 255
+      g = heat - 55
+      b = 0
+    else
+      r = heat * 1.2
+      g = heat * 0.3
+      b = 0
+    end
+    setled(i, r, g, b)
+  next
+  show()
+end
+*/
+
+// Program 3: Bouncing Ball
+/*
+setup
+  brightness(150)
+  clear()
+  ballPos = 0
+  ballDir = 1
+  ballSpeed = 0.1
+end
+
+loop(time)
+  clear()
+  
+  ballPos = ballPos + ballDir * ballSpeed
+  
+  if ballPos >= numled() - 1
+    ballPos = numled() - 1
+    ballDir = -1
+  end
+  
+  if ballPos <= 0
+    ballPos = 0
+    ballDir = 1
+  end
+  
+  // Draw the ball with a tail
+  for i = 0 to 4
+    pos = ballPos - i * ballDir
+    if pos >= 0 and pos < numled()
+      brightness = 255 - i * 50
+      setled(pos, brightness, brightness, 255)
+    end
+  next
+  
+  show()
+end
+*/
+
+// Program 4: Audio Visualizer Simulation
+/*
+setup
+  brightness(180)
+  clear()
+end
+
+loop(time)
+  for i = 0 to numled()-1
+    // Simulate audio data with multiple sine waves
+    bass = sin(time / 200) * 127 + 128
+    mid = sin(time / 150 + i * 0.1) * 100 + 128
+    treble = sin(time / 100 + i * 0.2) * 80 + 128
+    
+    // Map frequency bands to colors
+    r = bass * (1 - i / numled())
+    g = mid * abs(sin(i * 0.5))
+    b = treble * (i / numled())
+    
+    setled(i, r, g, b)
+  next
+  show()
+end
+*/
+
+// Program 5: Matrix Rain Effect
+/*
+setup
+  brightness(120)
+  clear()
+  for i = 0 to numled()-1
+    drops[i] = -1
+  next
+end
+
+loop(time)
+  // Fade all LEDs
+  for i = 0 to numled()-1
+    r = 0
+    g = max(0, getled(i, 1) - 15)  // Fade green channel
+    b = 0
+    setled(i, r, g, b)
+  next
+  
+  // Randomly start new drops
+  if time % 50 == 0
+    newDrop = floor(random() * numled())
+    setled(newDrop, 0, 255, 0)
+  end
+  
+  show()
+end
+*/
+
+// Program 6: Plasma Effect
+/*
+setup
+  brightness(160)
+  clear()
+end
+
+loop(time)
+  for i = 0 to numled()-1
+    // Create plasma effect using sine waves
+    plasma1 = sin(i * 0.1 + time / 200)
+    plasma2 = sin(i * 0.2 + time / 300)
+    plasma3 = sin(i * 0.15 + time / 250)
+    
+    plasma = (plasma1 + plasma2 + plasma3) / 3
+    
+    // Map to HSV color space
+    h = (plasma * 180 + 180) % 360
+    s = 255
+    v = abs(plasma) * 255
+    
+    setled(i, hsv(h, s, v))
+  next
+  show()
+end
+*/
+
+// Program 7: Sine Wave Animation
+/*
+setup
+  brightness(128)
+  clear()
+  speed = 200
+  frequency = 0.39
+  amplitude = 127
+end
+
+loop(time)
+  for i = 0 to numled()-1
+    wave = sin(i * frequency + time / speed) * amplitude + 128
+    setled(i, wave, 0, 255 - wave)
+  next
+  show()
+end
+*/
+
+// Program 8: Breathing Effect
+/*
+setup
+  brightness(128)
+  clear()
+  speed = 1000
+  intensity = 127
+end
+
+loop(time)
+  breath = (sin(time / speed) + 1) * intensity
+  fill(breath, 0, 255 - breath)
+  show()
+end
+*/
+
+// Program 9: Double Rainbow
+/*
+setup
+  brightness(128)
+  clear()
+  speed = 30
+  hue_spread = 180
+  saturation = 255
+  brightness_level = 255
+end
+
+loop(time)
+  for i = 0 to numled()-1
+    if i % 2 == 0
+      h = (i * hue_spread / numled() + time / speed) % 360
+    else
+      h = (360 - (i * hue_spread / numled() + time / speed)) % 360
+    end
+    sethsv(i, h, saturation, brightness_level)
+  next
+  show()
+end
+*/
+
+// Four-Strip Demo uses programs: 1 (Rainbow Wave), 7 (Sine Wave), 8 (Breathing), and 9 (Double Rainbow)
