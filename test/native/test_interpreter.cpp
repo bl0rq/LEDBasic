@@ -59,6 +59,7 @@ static void testParseFail() {
     CHECK(!c.loadProgram(String("setup\n  ???\nend\n")), "invalid tokens fail load");
     CHECK(!c.loadProgram(String("param speed typo(1)\nsetup\nend\nloop(time)\nend\n")),
           "unknown param type fails load");
+    CHECK(!c.loadProgram(String("setup\n  clear()\n")), "unterminated setup fails load");
 }
 
 static void testReload() {

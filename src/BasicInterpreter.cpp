@@ -656,16 +656,16 @@ ASTNode* BasicParser::parseFor() {
         forNode->addChild(stepNode);
     }
     
-    forNode->addChild(parseBlock()); // body
-    
+    forNode->addChild(parseBlock(false)); // body terminated by next
+
     consume(TOK_NEXT, "Expected 'next'");
     
     return forNode;
 }
 
-ASTNode* BasicParser::parseBlock() {
+ASTNode* BasicParser::parseBlock(bool requireEnd) {
     ASTNode* block = new ASTNode(NODE_BLOCK);
-    
+
     while (!check(TOK_EOF) && !check(TOK_END) && !check(TOK_ELSE) && !check(TOK_NEXT)) {
         if (check(TOK_NEWLINE)) {
             advance();
@@ -673,11 +673,13 @@ ASTNode* BasicParser::parseBlock() {
         }
         block->addChild(parseStatement());
     }
-    
-    if (check(TOK_END)) {
-        advance();
+
+    if (requireEnd) {
+        if (!check(TOK_ELSE)) {
+            consume(TOK_END, "Expected 'end'");
+        }
     }
-    
+
     return block;
 }
 
