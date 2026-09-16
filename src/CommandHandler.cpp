@@ -5,11 +5,13 @@
 
 static CommandHandlerCallbacks _callbacks;
 static String serialBuffer;
+static bool serialOverflow = false;
 static const uint16_t kMaxSerialLine = 128;
 
 void initCommandHandler(const CommandHandlerCallbacks& callbacks) {
   _callbacks = callbacks;
   serialBuffer = "";
+  serialOverflow = false;
 }
 
 static void handleCommand(const String& input, BasicLEDController* basicControllers[], int numStrips) {
@@ -113,13 +115,21 @@ void processSerialInput(BasicLEDController* basicControllers[], int numStrips) {
       continue;
     }
     if (c == '\n') {
-      serialBuffer.trim();
-      if (serialBuffer.length() > 0) {
-        handleCommand(serialBuffer, basicControllers, numStrips);
+      if (serialOverflow) {
+        Serial.println("Command too long; ignored.");
+        serialOverflow = false;
+        serialBuffer = "";
+      } else {
+        serialBuffer.trim();
+        if (serialBuffer.length() > 0) {
+          handleCommand(serialBuffer, basicControllers, numStrips);
+        }
+        serialBuffer = "";
       }
-      serialBuffer = "";
     } else if (serialBuffer.length() < kMaxSerialLine) {
       serialBuffer += c;
+    } else {
+      serialOverflow = true;
     }
   }
 }
