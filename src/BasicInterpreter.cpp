@@ -905,7 +905,7 @@ ASTNode* BasicParser::parse() {
 
 BasicInterpreter::BasicInterpreter(CRGB* ledArray, int ledCount)
     : leds(ledArray), numLeds(ledCount), showCalled(false), ownsPhysicalOutput(true),
-      outputBrightness(255), setupNode(nullptr), loopNode(nullptr) {
+      autoShow(true), outputBrightness(255), setupNode(nullptr), loopNode(nullptr) {
     reset();
 }
 
@@ -1015,7 +1015,7 @@ void BasicInterpreter::runLoop(unsigned long timeMs) {
         showCalled = false;
         execute(loopNode->children[1]);
 
-        if (!showCalled && ownsPhysicalOutput) {
+        if (!showCalled && autoShow) {
             FastLED.show();
         }
     }
@@ -1455,7 +1455,7 @@ Value BasicInterpreter::callLedFunction(TokenType func, const std::vector<Value>
 
         case TOK_SHOW: {
             showCalled = true;
-            if (ownsPhysicalOutput) {
+            if (autoShow) {
                 FastLED.show();
             }
             break;
@@ -1677,6 +1677,12 @@ void BasicLEDController::clearParameters() {
 void BasicLEDController::setOwnsPhysicalOutput(bool owns) {
     if (interpreter) {
         interpreter->setOwnsPhysicalOutput(owns);
+    }
+}
+
+void BasicLEDController::setAutoShow(bool enable) {
+    if (interpreter) {
+        interpreter->setAutoShow(enable);
     }
 }
 

@@ -379,6 +379,7 @@ private:
     int numLeds;
     bool showCalled;
     bool ownsPhysicalOutput;
+    bool autoShow;
     uint8_t outputBrightness;
     ASTNode* setupNode;
     ASTNode* loopNode;
@@ -405,8 +406,13 @@ public:
     void setVariable(const String& name, const Value& value);
     Value getVariable(const String& name);
 
-    void setOwnsPhysicalOutput(bool owns) { ownsPhysicalOutput = owns; }
+    void setOwnsPhysicalOutput(bool owns) {
+        ownsPhysicalOutput = owns;
+        if (!owns) autoShow = false;
+    }
     bool getOwnsPhysicalOutput() const { return ownsPhysicalOutput; }
+    void setAutoShow(bool enable) { autoShow = enable; }
+    bool getAutoShow() const { return autoShow; }
     uint8_t getOutputBrightness() const { return outputBrightness; }
 
     // Parameter management
@@ -518,6 +524,7 @@ public:
     String getStringVariable(const String& name);
 
     void setOwnsPhysicalOutput(bool owns);
+    void setAutoShow(bool enable);
     uint8_t getOutputBrightness() const;
 
     void addParameter(const Parameter& param);

@@ -167,6 +167,7 @@ void setup() {
   // Create BasicLEDControllers
   for (int i = 0; i < NUM_STRIPS; ++i) {
     basicControllers[i] = new BasicLEDController(leds[i], NUM_LEDS[i]);
+    basicControllers[i]->setAutoShow(false);
     basicActive[i] = false;
   }
 
