@@ -292,7 +292,7 @@ The interpreter uses dynamic memory allocation. On ESP32:
 - Monitor heap usage with complex programs
 - Consider using PSRAM for larger programs
 - Simplify programs if you encounter memory issues
-- Lexer/parser token strings are discarded after a successful `loadProgram()`; the AST is kept for `runLoop()`
+- The lexer/parser token vector is discarded after a successful `loadProgram()`; the retained AST still contains copies of token text used by its nodes
 
 ## Troubleshooting
 
