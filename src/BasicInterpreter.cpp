@@ -13,12 +13,18 @@
 #define M_E 2.71828182845904523536
 #endif
 
-// Platform-portable random number generation
+// Platform-portable random number generation.
+// LEDBASIC_RANDOM_MAX is the inclusive maximum ledbasic_random() can return.
 #ifdef ESP32
   #include <esp_random.h>
   static inline uint32_t ledbasic_random() { return esp_random(); }
+  static const float LEDBASIC_RANDOM_MAX = 4294967295.0f;
 #else
-  static inline uint32_t ledbasic_random() { return (uint32_t)random(0, 0x7FFFFFFF); }
+  static const long LEDBASIC_RANDOM_EXCLUSIVE = 0x7FFFFFFF;
+  static inline uint32_t ledbasic_random() {
+      return (uint32_t)random(0, LEDBASIC_RANDOM_EXCLUSIVE);
+  }
+  static const float LEDBASIC_RANDOM_MAX = (float)(LEDBASIC_RANDOM_EXCLUSIVE - 1);
 #endif
 
 static inline bool isSpaceChar(char c) { return isspace((unsigned char)c) != 0; }
@@ -1334,7 +1340,7 @@ Value BasicInterpreter::callMathFunction(TokenType func, const std::vector<Value
                 if (span == 0) return Value(0);
                 return Value((float)(ledbasic_random() % span));
             }
-            return Value((float)ledbasic_random() / 4294967295.0f);
+            return Value((float)ledbasic_random() / LEDBASIC_RANDOM_MAX);
         case TOK_MAP:
             if (args.size() >= 5) {
                 float value = args[0].asNumber();
