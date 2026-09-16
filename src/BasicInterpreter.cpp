@@ -1043,7 +1043,11 @@ Value BasicInterpreter::evaluate(ASTNode* node) {
             switch (node->token.type) {
                 case TOK_PLUS:
                     if (left.type == VAL_STRING || right.type == VAL_STRING) {
-                        return Value(left.type == VAL_STRING ? left.stringValue + String(rv) : String(lv) + right.stringValue);
+                        auto toString = [](const Value& v) -> String {
+                            if (v.type == VAL_STRING) return v.stringValue;
+                            return String(v.asNumber());
+                        };
+                        return Value(toString(left) + toString(right));
                     }
                     return Value(lv + rv);
                 case TOK_MINUS:

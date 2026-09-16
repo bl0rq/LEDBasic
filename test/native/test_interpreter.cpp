@@ -94,6 +94,22 @@ end
     CHECK(leds[2].r > 0 || leds[2].g > 0 || leds[2].b > 0, "negative hue wrapped");
 }
 
+static void testStringConcat() {
+    CRGB leds[2];
+    BasicLEDController c(leds, 2);
+    const char* src = R"(
+setup
+  a = "a" + "b"
+  b = "n" + 3
+end
+loop(time)
+end
+)";
+    CHECK(c.loadProgram(String(src)), "string concat program loads");
+    c.runSetup();
+    CHECK(c.getStringVariable("a") == "ab", "\"a\" + \"b\" == \"ab\"");
+}
+
 static void testPowerAndRandom() {
     CRGB leds[2];
     BasicLEDController c(leds, 2);
@@ -183,6 +199,7 @@ int main() {
     testParseFail();
     testReload();
     testHsvSetled();
+    testStringConcat();
     testPowerAndRandom();
     testForLoopWrites();
     testVirtualNoPhysicalShow();
