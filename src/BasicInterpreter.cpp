@@ -475,20 +475,27 @@ ASTNode* BasicParser::parseParamDecl() {
     ASTNode* paramDecl = new ASTNode(NODE_PARAM_DECL, nameToken);
     paramDecl->name = nameToken.value;
 
-    if (match(TOK_IDENTIFIER)) {
-        Token typeToken = tokens[current - 1];
-        paramDecl->value = Value(typeToken.value);
+    if (!match(TOK_IDENTIFIER)) {
+        error("Expected parameter type (number, boolean, or enum)");
+        return paramDecl;
+    }
 
-        if (match(TOK_LPAREN)) {
-            if (!check(TOK_RPAREN)) {
-                do {
-                    if (!parseParamLiteral(paramDecl)) {
-                        break;
-                    }
-                } while (match(TOK_COMMA));
-            }
-            consume(TOK_RPAREN, "Expected ')' after parameter attributes");
+    Token typeToken = tokens[current - 1];
+    String paramType = typeToken.value;
+    if (paramType != "number" && paramType != "boolean" && paramType != "enum") {
+        error("Unknown parameter type '" + paramType + "' (expected number, boolean, or enum)");
+    }
+    paramDecl->value = Value(paramType);
+
+    if (match(TOK_LPAREN)) {
+        if (!check(TOK_RPAREN)) {
+            do {
+                if (!parseParamLiteral(paramDecl)) {
+                    break;
+                }
+            } while (match(TOK_COMMA));
         }
+        consume(TOK_RPAREN, "Expected ')' after parameter attributes");
     }
 
     return paramDecl;
@@ -994,6 +1001,8 @@ void BasicInterpreter::processParameterDeclaration(ASTNode* node) {
         param.minValue = 0;
         param.maxValue = param.enumValues.empty() ? 0.0f : (float)(param.enumValues.size() - 1);
         param.stepValue = 1;
+    } else {
+        return;
     }
 
     addParameter(param);

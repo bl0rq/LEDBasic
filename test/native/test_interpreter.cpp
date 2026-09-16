@@ -57,6 +57,8 @@ static void testParseFail() {
     CRGB leds[4];
     BasicLEDController c(leds, 4);
     CHECK(!c.loadProgram(String("setup\n  ???\nend\n")), "invalid tokens fail load");
+    CHECK(!c.loadProgram(String("param speed typo(1)\nsetup\nend\nloop(time)\nend\n")),
+          "unknown param type fails load");
 }
 
 static void testReload() {
