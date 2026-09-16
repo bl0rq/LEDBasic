@@ -1853,7 +1853,8 @@ void VirtualStripManager::removeStrip(VirtualStrip* strip) {
             break;
         }
     }
-    if (!hasEnabledLayerOn(idx)) {
+    if (!hasEnabledLayerOn(idx) &&
+        idx >= 0 && idx < (int)virtualOwned.size() && virtualOwned[idx]) {
         clearPhysicalStrip(idx);
     }
 }
