@@ -1085,9 +1085,22 @@ Value BasicInterpreter::evaluate(ASTNode* node) {
                 case TOK_POWER:
                     return Value(powf(lv, rv));
                 case TOK_EQUALS:
-                    return Value(lv == rv ? 1.0f : 0.0f);
-                case TOK_NOT_EQUALS:
-                    return Value(lv != rv ? 1.0f : 0.0f);
+                case TOK_NOT_EQUALS: {
+                    bool eq;
+                    if (left.type == VAL_STRING && right.type == VAL_STRING) {
+                        eq = left.stringValue == right.stringValue;
+                    } else if (left.type == VAL_COLOR && right.type == VAL_COLOR) {
+                        eq = left.colorValue == right.colorValue;
+                    } else if (left.type == VAL_STRING || right.type == VAL_STRING ||
+                               left.type == VAL_COLOR || right.type == VAL_COLOR) {
+                        eq = false;
+                    } else {
+                        eq = lv == rv;
+                    }
+                    float result = eq ? 1.0f : 0.0f;
+                    if (node->token.type == TOK_NOT_EQUALS) result = eq ? 0.0f : 1.0f;
+                    return Value(result);
+                }
                 case TOK_LESS_THAN:
                     return Value(lv < rv ? 1.0f : 0.0f);
                 case TOK_GREATER_THAN:

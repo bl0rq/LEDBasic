@@ -104,6 +104,29 @@ end
           "negative hue -90 wraps to the same color as 270");
 }
 
+static void testEquality() {
+    CRGB leds[2];
+    BasicLEDController c(leds, 2);
+    const char* src = R"(
+setup
+  s = "a" == "b"
+  t = "a" == "a"
+  u = rgb(1, 2, 3) == rgb(1, 9, 3)
+  v = rgb(1, 2, 3) == rgb(1, 2, 3)
+  w = 1 == 1
+end
+loop(time)
+end
+)";
+    CHECK(c.loadProgram(String(src)), "equality program loads");
+    c.runSetup();
+    CHECK(c.getNumberVariable("s") == 0.0, "distinct strings are not equal");
+    CHECK(c.getNumberVariable("t") == 1.0, "identical strings are equal");
+    CHECK(c.getNumberVariable("u") == 0.0, "colors with same red are not equal");
+    CHECK(c.getNumberVariable("v") == 1.0, "identical colors are equal");
+    CHECK(c.getNumberVariable("w") == 1.0, "numeric equality still works");
+}
+
 static void testStringConcat() {
     CRGB leds[2];
     BasicLEDController c(leds, 2);
@@ -228,6 +251,7 @@ int main() {
     testParseFail();
     testReload();
     testHsvSetled();
+    testEquality();
     testStringConcat();
     testPowerAndRandom();
     testForLoopWrites();
