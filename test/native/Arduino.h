@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 typedef uint8_t byte;
@@ -45,9 +46,13 @@ public:
     String(const char* v) : s(v ? v : "") {}
     String(const std::string& v) : s(v) {}
     String(char c) : s(1, c) {}
-    String(int v) : s(std::to_string(v)) {}
-    String(long long v) : s(std::to_string(v)) {}
-    String(unsigned long long v) : s(std::to_string(v)) {}
+    // One integral overload so size_t/long/unsigned long are not ambiguous
+    // on both LP64 (Linux) and LLP64 (Windows).
+    template <typename T, typename std::enable_if<
+        std::is_integral<T>::value &&
+        !std::is_same<T, bool>::value &&
+        !std::is_same<T, char>::value, int>::type = 0>
+    String(T v) : s(std::to_string(v)) {}
     String(float v) : s(std::to_string(v)) {}
     String(double v) : s(std::to_string(v)) {}
 
