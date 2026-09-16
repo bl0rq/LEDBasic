@@ -86,6 +86,7 @@ loop(time)
   setled(0, hsv(0, 255, 255))
   setled(1, rgb(1, 2, 3))
   sethsv(2, -90, 255, 255)
+  sethsv(3, 270, 255, 255)
   show()
 end
 )";
@@ -94,7 +95,8 @@ end
     c.runLoop(0);
     CHECK(leds[1].r == 1 && leds[1].g == 2 && leds[1].b == 3, "rgb() packed color via setled");
     CHECK(leds[0].r > 0 || leds[0].g > 0 || leds[0].b > 0, "hsv() produced a color");
-    CHECK(leds[2].r > 0 || leds[2].g > 0 || leds[2].b > 0, "negative hue wrapped");
+    CHECK(leds[2].r == leds[3].r && leds[2].g == leds[3].g && leds[2].b == leds[3].b,
+          "negative hue -90 wraps to the same color as 270");
 }
 
 static void testStringConcat() {
