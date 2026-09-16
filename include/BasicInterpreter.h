@@ -483,8 +483,11 @@ private:
         int length;
     };
     std::vector<PhysicalStrip> physicalStrips;
+    std::vector<uint8_t> virtualOwned;
 
     void blendPixel(CRGB& dest, const CRGB& src, BlendMode mode);
+    void clearPhysicalStrip(int idx);
+    bool hasEnabledLayerOn(int idx) const;
 
 public:
     VirtualStripManager();

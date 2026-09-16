@@ -188,6 +188,25 @@ static void testExamplesLoad() {
     CHECK(c.getParameter("head_brightness") != nullptr, "BikeRolling has head_brightness");
 }
 
+static void testVirtualClearOnRemove() {
+    CRGB phys[4];
+    for (int i = 0; i < 4; i++) phys[i] = CRGB(9, 9, 9);
+    VirtualStripManager mgr;
+    mgr.addPhysicalStrip(phys, 4);
+    VirtualStrip* vs = mgr.createStrip(0, 0, 4, 0, BLEND_REPLACE);
+    CHECK(vs != nullptr, "createStrip for clear test");
+    CHECK(vs->loadProgram(String(
+        "setup\n  fill(1,2,3)\nend\nloop(time)\n  fill(4,5,6)\nend\n")),
+        "fill program loads");
+    vs->runSetup();
+    vs->runLoop(0);
+    mgr.renderToPhysical();
+    CHECK(phys[0].r == 4, "virtual fill composited");
+    mgr.removeAllStrips();
+    CHECK(phys[0].r == 0 && phys[0].g == 0 && phys[0].b == 0,
+          "removeAllStrips clears stale virtual pixels");
+}
+
 static void testPhysicalShow() {
     FastLED.showCount = 0;
     CRGB leds[4];
@@ -206,6 +225,7 @@ int main() {
     testPowerAndRandom();
     testForLoopWrites();
     testVirtualNoPhysicalShow();
+    testVirtualClearOnRemove();
     testExamplesLoad();
     testPhysicalShow();
 

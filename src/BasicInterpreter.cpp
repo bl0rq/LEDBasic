@@ -1786,6 +1786,27 @@ VirtualStripManager::~VirtualStripManager() {
 
 void VirtualStripManager::addPhysicalStrip(CRGB* leds, int length) {
     physicalStrips.push_back({leds, length});
+    virtualOwned.push_back(0);
+}
+
+void VirtualStripManager::clearPhysicalStrip(int idx) {
+    if (idx < 0 || idx >= (int)physicalStrips.size()) return;
+    PhysicalStrip& phys = physicalStrips[idx];
+    for (int j = 0; j < phys.length; j++) {
+        phys.leds[j] = CRGB::Black;
+    }
+    if (idx < (int)virtualOwned.size()) {
+        virtualOwned[idx] = 0;
+    }
+}
+
+bool VirtualStripManager::hasEnabledLayerOn(int idx) const {
+    for (VirtualStrip* strip : strips) {
+        if (strip && strip->isEnabled() && strip->getStripIndex() == idx) {
+            return true;
+        }
+    }
+    return false;
 }
 
 VirtualStrip* VirtualStripManager::createStrip(int stripIndex, int start, int length, int zOrder, BlendMode blend, bool reverse) {
@@ -1805,12 +1826,17 @@ VirtualStrip* VirtualStripManager::createStrip(int stripIndex, int start, int le
 }
 
 void VirtualStripManager::removeStrip(VirtualStrip* strip) {
+    if (!strip) return;
+    int idx = strip->getStripIndex();
     for (auto it = strips.begin(); it != strips.end(); ++it) {
         if (*it == strip) {
             delete strip;
             strips.erase(it);
             break;
         }
+    }
+    if (!hasEnabledLayerOn(idx)) {
+        clearPhysicalStrip(idx);
     }
 }
 
@@ -1819,6 +1845,11 @@ void VirtualStripManager::removeAllStrips() {
         delete strip;
     }
     strips.clear();
+    for (size_t i = 0; i < physicalStrips.size(); i++) {
+        if (i < virtualOwned.size() && virtualOwned[i]) {
+            clearPhysicalStrip((int)i);
+        }
+    }
 }
 
 void VirtualStripManager::runAllSetups() {
@@ -1834,6 +1865,10 @@ void VirtualStripManager::runAllLoops(unsigned long timeMs) {
 }
 
 void VirtualStripManager::renderToPhysical() {
+    if (virtualOwned.size() < physicalStrips.size()) {
+        virtualOwned.resize(physicalStrips.size(), 0);
+    }
+
     std::vector<uint8_t> touched(physicalStrips.size(), 0);
     for (VirtualStrip* strip : strips) {
         if (!strip || !strip->isEnabled()) continue;
@@ -1844,7 +1879,7 @@ void VirtualStripManager::renderToPhysical() {
     }
 
     for (size_t i = 0; i < physicalStrips.size(); i++) {
-        if (!touched[i]) continue;
+        if (!touched[i] && !virtualOwned[i]) continue;
         PhysicalStrip& phys = physicalStrips[i];
         for (int j = 0; j < phys.length; j++) {
             phys.leds[j] = CRGB::Black;
@@ -1885,6 +1920,10 @@ void VirtualStripManager::renderToPhysical() {
                 }
             }
         }
+    }
+
+    for (size_t i = 0; i < physicalStrips.size(); i++) {
+        virtualOwned[i] = touched[i];
     }
 }
 
