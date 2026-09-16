@@ -1194,12 +1194,12 @@ void BasicInterpreter::execute(ASTNode* node) {
             if (node->children.size() >= 2) {
                 int iterations = 0;
                 while (true) {
+                    Value condition = evaluate(node->children[0]);
+                    if (condition.asNumber() == 0) break;
                     if (++iterations > kMaxLoopIterations) {
                         Serial.println("Runtime error: while loop exceeded iteration limit");
                         break;
                     }
-                    Value condition = evaluate(node->children[0]);
-                    if (condition.asNumber() == 0) break;
                     execute(node->children[1]);
                 }
             }
@@ -1223,12 +1223,12 @@ void BasicInterpreter::execute(ASTNode* node) {
                 slots[slot] = start;
                 int iterations = 0;
                 while (true) {
-                    if (++iterations > kMaxLoopIterations) {
-                        Serial.println("Runtime error: for loop exceeded iteration limit");
-                        break;
-                    }
                     float current = slots[slot].asNumber();
                     if ((stepN > 0 && current > endN) || (stepN < 0 && current < endN)) {
+                        break;
+                    }
+                    if (++iterations > kMaxLoopIterations) {
+                        Serial.println("Runtime error: for loop exceeded iteration limit");
                         break;
                     }
                     execute(node->children[4]);
