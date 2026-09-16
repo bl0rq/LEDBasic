@@ -130,10 +130,26 @@ void loadExampleProgram(int stripIndex, int programIndex) {
   }
 }
 
-void runVirtualStrips() {
-  stripManager->runAllLoops(millis());
-  stripManager->renderToPhysical();
-  FastLED.show();
+void runFrame() {
+  unsigned long now = millis();
+  bool anyBasic = false;
+
+  for (int i = 0; i < NUM_STRIPS; ++i) {
+    if (basicActive[i] && basicControllers[i]) {
+      basicControllers[i]->runLoop(now);
+      anyBasic = true;
+    }
+  }
+
+  bool anyVirtual = stripManager->getStripCount() > 0;
+  if (anyVirtual) {
+    stripManager->runAllLoops(now);
+    stripManager->renderToPhysical();
+  }
+
+  if (anyVirtual || anyBasic) {
+    FastLED.show();
+  }
 }
 
 // ----- Arduino Setup & Loop -----
@@ -183,7 +199,7 @@ void setup() {
 
 void loop() {
   processSerialInput(basicControllers, NUM_STRIPS);
-  runVirtualStrips();
+  runFrame();
 
   unsigned long currentMillis = millis();
   unsigned long elapsed = currentMillis - lastMillis;

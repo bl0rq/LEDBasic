@@ -1,0 +1,7 @@
+.pio/
+.vscode/
+*.o
+*.exe
+*.log
+test/native/test_interpreter.exe
+test/native/build.log

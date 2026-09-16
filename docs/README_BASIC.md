@@ -1,73 +1,14 @@
-# ESP32 BASIC LED Animation Language
+# LEDBasic language reference
 
-This project implements a simple BASIC-like programming language specifically designed for creating LED animations on ESP32 microcontrollers using the FastLED library.
+LEDBasic is a small BASIC-like language for FastLED animations. Programs are loaded as strings into `BasicLEDController` (or a `VirtualStrip`) and interpreted on the device.
 
-## Features
+This document describes the language **as implemented**. Angles for `sin`/`cos`/`tan` are **radians**. Keywords are **lowercase**.
 
-### Language Features
-- **Variables**: Numeric and string variables
-- **Math Operations**: `+`, `-`, `*`, `/`, `%` (modulo), `**` (power)
-- **Comparison**: `==`, `!=`, `<`, `>`, `<=`, `>=`
-- **Logic**: `and`, `or`, `not`
-- **Control Flow**: `if/else`, `while`, `for/to/step/next`
-- **Functions**: Built-in math and LED control functions
+## Program structure
 
-### Math Functions
-- `sin(x)`, `cos(x)`, `tan(x)` - Trigonometric functions
-- `sqrt(x)` - Square root
-- `pow(x, y)` - Power function
-- `log(x)` - Base-10 logarithm
-- `ln(x)` - Natural logarithm
-- `abs(x)` - Absolute value
-- `floor(x)`, `ceil(x)`, `round(x)` - Rounding functions
-- `min(x, y)`, `max(x, y)` - Minimum and maximum
-- `random()` - Random number 0.0 to 1.0 (uses ESP32 hardware RNG)
-- `random(max)` - Random integer 0 to max-1
-
-### LED Control Functions
-- `setled(index, r, g, b)` - Set individual LED color
-- `sethsv(index, h, s, v)` - Set LED using HSV color (h: 0-360, s,v: 0-255)
-- `clear()` - Turn off all LEDs
-- `fill(r, g, b)` - Fill all LEDs with a color
-- `show()` - Update the LED strip (call after changes)
-- `brightness(value)` - Set global brightness (0-255)
-- `numled()` - Get number of LEDs in strip
-- `rgb(r, g, b)` - Create RGB color
-- `hsv(h, s, v)` - Create HSV color (h: 0-360, s,v: 0-255)
-
-### Built-in Constants
-- `PI` - 3.14159...
-- `E` - 2.71828...
-
-## Program Structure
-
-Every BASIC LED program must have two main sections:
-
-### Setup Section
 ```basic
-setup
-  // Initialization code here
-  brightness(128)
-  clear()
-end
-```
+param speed number(20.0, 5.0, 100.0, 1.0)
 
-### Loop Section
-```basic
-loop(time)
-  // Animation code here
-  // 'time' parameter contains current milliseconds
-  for i = 0 to numled()-1
-    setled(i, 255, 0, 0)  // Set LED to red
-  next
-  show()
-end
-```
-
-## Example Programs
-
-### 1. Rainbow Animation
-```basic
 setup
   brightness(128)
   clear()
@@ -75,138 +16,58 @@ end
 
 loop(time)
   for i = 0 to numled()-1
-    h = (i * 360 / numled() + time / 20) % 360
-    setled(i, hsv(h, 255, 255))
+    h = (i * 360 / numled() + time / speed) % 360
+    sethsv(i, h, 255, 255)
   next
   show()
 end
 ```
 
-### 2. Sine Wave Effect
+- `setup` … `end` runs once via `runSetup()`.
+- `loop(time)` … `end` runs every `runLoop(millis())`. `time` is milliseconds.
+- `param` declarations are discovered automatically when the program loads.
+
+## Comments
+
 ```basic
-setup
-  brightness(128)
-  clear()
-end
-
-loop(time)
-  for i = 0 to numled()-1
-    wave = sin(i * PI / 8 + time / 200) * 127 + 128
-    setled(i, wave, 0, 255 - wave)
-  next
-  show()
-end
+// C++-style comment
+# hash comment
+x = 1  // trailing comment
 ```
 
-### 3. Breathing Effect
-```basic
-setup
-  brightness(128)
-  clear()
-end
+## Types and variables
 
-loop(time)
-  breath = (sin(time / 1000) + 1) * 127
-  fill(breath, 0, 255 - breath)
-  show()
-end
-```
+- Numbers are 32-bit floats.
+- Strings use double quotes with `\"`, `\n`, `\t`, `\r`, `\\`.
+- Colors are a packed RGB value returned by `rgb()`, `hsv()`, `wheel()`, and `hsv_to_rgb()`.
+- Arrays: `dim name(size)` then `name[i] = value` / `name[i]`. Size is capped at 1024.
+- `true` and `false` are 1 and 0.
+- Built-ins: `PI`, `E`.
+- Assignment creates a variable: `x = 42`.
+- Reserved words cannot be variable names (`if`, `for`, `sin`, `random`, `end`, …).
 
-### 4. Matrix Digital Rain
-```basic
-setup
-  brightness(180)
-  clear()
-end
+## Operators
 
-loop(time)
-  // Fade existing pixels
-  for i = 0 to numled()-1
-    fadeAmount = (sin(i * 0.7 + time / 100) + 1) * 8 + 5
-    currentGreen = max(0, 200 - fadeAmount)
-    if currentGreen < 20
-      currentGreen = 0
-    end
-    setled(i, 0, currentGreen, 0)
-  next
-  
-  // Add random drops
-  for i = 0 to 5
-    if random(1000) < 15
-      pos = floor(random(numled()))
-      setled(pos, 100, 255, 100)
-    end
-  next
-  
-  show()
-end
-```
+| Level | Operators | Associativity |
+|-------|-----------|---------------|
+| Unary | `-`, `not`, `!` | right |
+| Power | `**` | right |
+| Factor | `*`, `/`, `%` | left |
+| Term | `+`, `-` | left |
+| Compare | `<`, `>`, `<=`, `>=` | left |
+| Equality | `==`, `!=` | left |
+| And | `and` | left |
+| Or | `or` | left |
 
-## Hardware Setup
+`%` is floating modulo (`fmod`). Divide or modulo by zero yields 0.
 
-1. Connect your LED strip to pin 5 (or modify `strip_pin` in main.cpp)
-2. Connect onboard LED indicator to pin 48 (ESP32-S3) or 21 (ESP32-S3-NANO)
-3. Power your LED strip appropriately for your number of LEDs
+## Control flow
 
-## Usage
-
-### Loading Programs via Serial Monitor
-
-1. Open Serial Monitor at 115200 baud
-2. Send one of these commands:
-   - `0` - Load rainbow program
-   - `1` - Load sine wave program
-   - `2` - Load breathing program
-   - `3` - Load double rainbow program
-   - `4` - Load Matrix digital rain program
-   - `5` - Run layered virtual-strip demo
-   - `6` - Run overlapping regions demo
-   - `7` - Run four-strip segmented demo
-
-### Four-Strip Segment Demo
-
-The `setupFourStripDemo()` function divides each of the four physical strips into
-four equal segments and assigns a different BASIC program to each segment:
-
-1. Rainbow animation
-2. Sine wave motion
-3. Breathing effect
-4. Double rainbow
-
-Segments are created with the virtual strip API:
-
-```cpp
-VirtualStrip* seg = stripManager->createStrip(stripIndex, start, length, 0, BLEND_REPLACE);
-seg->loadProgram(String(source));
-```
-
-Modify the `start` and `length` values or load alternative program strings to
-map different effects to any portion of a strip. Additional segments can be
-added by repeating the pattern, enabling custom layouts for varied animations.
-
-To run the demo, send `0:7` over the Serial Monitor.
-
-### Programming Your Own Animations
-
-1. Modify the program strings in `main.cpp`
-2. Or implement a way to load programs from SD card, WiFi, etc.
-3. Use the example programs in `examples/BasicPrograms.txt` as templates
-
-## Language Syntax
-
-### Variables
-```basic
-x = 42
-name = "Hello"
-result = sin(x) + cos(x)
-```
-
-### Control Flow
 ```basic
 if x > 10
-  // do something
+  // then
 else
-  // do something else
+  // else
 end
 
 while x < 100
@@ -214,51 +75,88 @@ while x < 100
 end
 
 for i = 0 to 10 step 2
-  // i will be 0, 2, 4, 6, 8, 10
+  // 0, 2, 4, 6, 8, 10
 next
 ```
 
-### Comments
+`while` and `for` stop after 10,000 iterations per frame (protects the watchdog). A `for` step of 0 is an error.
+
+## Parameters
+
 ```basic
-// This is a single-line comment
-x = 42  // Comment at end of line
+param enabled boolean(true)
+param speed number(20.0, 5.0, 100.0, 1.0)   // default, min, max, step
+param mode enum(["Rainbow", "Solid", "Fade"])
 ```
 
-## Performance Notes
+Negative numbers are allowed in `number(...)`. Boolean defaults accept `true`/`false`/`1`/`0`. Enums default to index 0. Each parameter is also a variable in the program.
 
-- The interpreter is designed for simplicity, not maximum performance
-- Complex programs may affect frame rate
-- Use `show()` strategically - calling it too often can slow things down
-- The interpreter automatically calls `show()` at the end of each loop if you don't call it explicitly
+Serial (see the example sketch):
 
-## Extending the Language
+- `0:p` — list parameters on strip 0
+- `0:speed=30` — set a number
+- `0:enabled=true` — set a boolean (`true`/`1`/`on`)
+- `0:mode=Solid` — set an enum by name or index
 
-To add new functions:
+## Math (radians)
 
-1. Add token type to `TokenType` enum in `BasicInterpreter.h`
-2. Add keyword to `initKeywords()` in `BasicInterpreter.cpp`
-3. Implement function in `callLedFunction()` or `callMathFunction()`
+| Call | Result |
+|------|--------|
+| `sin(x)` `cos(x)` `tan(x)` | trig |
+| `sqrt(x)` | 0 if `x < 0` |
+| `pow(x, y)` / `x ** y` | power |
+| `log(x)` | base 10; 0 if `x <= 0` |
+| `ln(x)` | natural; 0 if `x <= 0` |
+| `abs` `floor` `ceil` `round` | |
+| `min(a, b)` `max(a, b)` | |
+| `random()` | 0.0 … 1.0 |
+| `random(max)` | integer `0 .. max-1`; `max <= 0` → 0 |
+| `map(v, in0, in1, out0, out1)` | linear map; empty in-range → `out0` |
+| `millis()` | milliseconds |
+| `delay(ms)` | blocks the chip — avoid in `loop` |
 
-## Memory Considerations
+## LED and color
 
-The interpreter uses dynamic memory allocation. On ESP32:
-- Monitor heap usage with complex programs
-- Consider using PSRAM for larger programs
-- Simplify programs if you encounter memory issues
+Hue is 0–360 and wraps (including negatives). Saturation/value for `sethsv`/`hsv` are 0–255.
+
+| Call | Result |
+|------|--------|
+| `numled()` / `get_led_count()` | LED count for this controller or virtual strip |
+| `setled(i, r, g, b)` / `set_led(...)` | RGB 0–255 |
+| `setled(i, color)` / `setcolor(i, color)` | packed color from `hsv`/`rgb`/`wheel` |
+| `sethsv(i, h, s, v)` | HSV |
+| `fill(r, g, b)` / `set_all(...)` / `fill(color)` | whole strip |
+| `clear()` | all black |
+| `show()` | commit. On a physical controller this calls `FastLED.show()`. On a virtual strip it only marks the frame complete; the manager composites and the sketch should `FastLED.show()` once. |
+| `brightness(v)` | 0–255. Physical: `FastLED.setBrightness`. Virtual: scales that layer at composite time (does not change other strips). |
+| `get_led_r/g/b(i)` | current buffer components |
+| `rgb(r, g, b)` | color |
+| `hsv(h, s, v)` | color, s/v 0–255 |
+| `wheel(pos)` | rainbow color, pos 0–255 |
+| `hsv_to_rgb(h, s, v)` | color. If s and v are both ≤ 100 they are treated as 0–100 (percent); otherwise 0–255. |
+
+`show()` is optional: `runLoop` auto-shows a **physical** controller if the program did not call `show()`. Virtual strips never call `FastLED.show()` themselves.
+
+## Virtual strips
+
+Layering is a **C++** API (`VirtualStripManager`), not BASIC. Black pixels in `BLEND_REPLACE` are transparent so lower Z-order layers show through.
+
+```cpp
+VirtualStrip* layer = manager->createStrip(stripIndex, start, length, zOrder, BLEND_ADD);
+layer->loadProgram(source);
+```
+
+Blend modes: `BLEND_REPLACE`, `BLEND_ADD`, `BLEND_SUBTRACT`, `BLEND_MULTIPLY`, `BLEND_SCREEN`, `BLEND_COLOR_SPACE`.
+
+## Extending the language
+
+1. Add a token to `TokenType` in `BasicInterpreter.h`
+2. Add a keyword in `BasicLexer::initKeywords()`
+3. Implement it in `callLedFunction()` or `callMathFunction()`
 
 ## Troubleshooting
 
-### Program Won't Load
-- Check syntax - missing `end` statements are common
-- Verify all parentheses are balanced
-- Check that all variables are defined before use
-
-### LEDs Not Responding
-- Ensure `show()` is called after LED changes
-- Check LED strip connections and power
-- Verify `numled()` matches your actual LED count
-
-### Performance Issues
-- Reduce complexity in loop section
-- Use fewer mathematical operations per frame
-- Consider optimizing color calculations
+- Program won't load: missing `end`/`next`, unbalanced `()`, or uppercase keywords (`SETUP` is not `setup`).
+- LEDs stay black: the Arduino `loop()` must call `runLoop()` for physical programs, or `runAllLoops` + `renderToPhysical` + `FastLED.show()` for virtual strips. `renderToPhysical` only clears strips that have virtual layers.
+- One layer changes every strip's brightness: that used to happen; virtual `brightness()` is now local to the layer.
+- Frame hitches on serial: input is read byte-by-byte; send a full line ending in `\n`.
