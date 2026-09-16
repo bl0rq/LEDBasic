@@ -1,6 +1,9 @@
 #ifndef EFFECTS_H
 #define EFFECTS_H
 
+// Opt-in extras. Do not include from LEDBasic.h — FastLED demo-reel internals
+// pull extra flash, and DoubleRainbowForever() never returns (infinite loop).
+
 #include <FastLED.h>
 #include "fx/1d/demoreel100.h"
 

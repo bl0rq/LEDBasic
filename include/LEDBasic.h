@@ -6,12 +6,11 @@
 
 #include "BasicInterpreter.h"
 #include "CommandHandler.h"
-#include "Effects.h"
 #include "VirtualStripDemos.h"
 
-// BasicExamples are opt-in. Include individually as needed:
+// Optional extras — include only when needed:
+//   #include "Effects.h"
 //   #include "BasicExamples/Rainbow.h"
 //   #include "BasicExamples/Breathing.h"
-//   etc.
 
 #endif // LED_BASIC_H

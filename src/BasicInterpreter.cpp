@@ -1,14 +1,62 @@
 #include "BasicInterpreter.h"
+#ifndef _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
+#endif
 #include <cmath>
 #include <algorithm>
+#include <ctype.h>
 
-// Platform-portable random number generation
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+#ifndef M_E
+#define M_E 2.71828182845904523536
+#endif
+
+// Platform-portable random number generation.
+// LEDBASIC_RANDOM_MAX is the inclusive maximum ledbasic_random() can return.
 #ifdef ESP32
   #include <esp_random.h>
   static inline uint32_t ledbasic_random() { return esp_random(); }
+  static const float LEDBASIC_RANDOM_MAX = 4294967295.0f;
 #else
-  static inline uint32_t ledbasic_random() { return (uint32_t)random(0, 0x7FFFFFFF); }
+  static const long LEDBASIC_RANDOM_EXCLUSIVE = 0x7FFFFFFF;
+  static inline uint32_t ledbasic_random() {
+      return (uint32_t)random(0, LEDBASIC_RANDOM_EXCLUSIVE);
+  }
+  static const float LEDBASIC_RANDOM_MAX = (float)(LEDBASIC_RANDOM_EXCLUSIVE - 1);
 #endif
+
+static inline bool isSpaceChar(char c) { return isspace((unsigned char)c) != 0; }
+static inline bool isDigitChar(char c) { return isdigit((unsigned char)c) != 0; }
+static inline bool isAlphaChar(char c) { return isalpha((unsigned char)c) != 0; }
+static inline bool isAlnumChar(char c) { return isalnum((unsigned char)c) != 0; }
+
+static int wrapHue360(int h) {
+    h %= 360;
+    if (h < 0) h += 360;
+    return h;
+}
+
+static CRGB hsvToCRGB(int h, int s, int v) {
+    h = wrapHue360(h);
+    s = constrain(s, 0, 255);
+    v = constrain(v, 0, 255);
+    return CRGB(CHSV((uint8_t)(h * 255 / 360), (uint8_t)s, (uint8_t)v));
+}
+
+static CRGB wheelToCRGB(int pos) {
+    pos %= 256;
+    if (pos < 0) pos += 256;
+    if (pos < 85) {
+        return CRGB(pos * 3, 255 - pos * 3, 0);
+    } else if (pos < 170) {
+        pos -= 85;
+        return CRGB(255 - pos * 3, 0, pos * 3);
+    }
+    pos -= 170;
+    return CRGB(0, pos * 3, 255 - pos * 3);
+}
 
 // =============================================================================
 // BasicLexer Implementation
@@ -36,6 +84,8 @@ void BasicLexer::initKeywords() {
     keywords["and"] = TOK_AND;
     keywords["or"] = TOK_OR;
     keywords["not"] = TOK_NOT;
+    keywords["true"] = TOK_TRUE;
+    keywords["false"] = TOK_FALSE;
     
     // Math functions
     keywords["sin"] = TOK_SIN;
@@ -96,7 +146,7 @@ char BasicLexer::advance() {
 }
 
 void BasicLexer::skipWhitespace() {
-    while (position < source.length() && isspace(peek()) && peek() != '\n') {
+    while (position < source.length() && isSpaceChar(peek()) && peek() != '\n') {
         advance();
     }
 }
@@ -129,12 +179,12 @@ Token BasicLexer::readNumber() {
     size_t start = position;
     size_t startColumn = column;
     
-    while (position < source.length() && (isdigit(peek()) || peek() == '.')) {
+    while (position < source.length() && (isDigitChar(peek()) || peek() == '.')) {
         advance();
     }
-    
+
     String value = source.substring(start, position);
-    return Token(TOK_NUMBER, value, value.toDouble(), line, startColumn);
+    return Token(TOK_NUMBER, value, value.toFloat(), line, startColumn);
 }
 
 Token BasicLexer::readString() {
@@ -175,7 +225,7 @@ Token BasicLexer::readIdentifier() {
     size_t start = position;
     size_t startColumn = column;
     
-    while (position < source.length() && (isalnum(peek()) || peek() == '_')) {
+    while (position < source.length() && (isAlnumChar(peek()) || peek() == '_')) {
         advance();
     }
     
@@ -200,15 +250,15 @@ Token BasicLexer::nextToken() {
     char c = peek();
     size_t currentColumn = column;
     
-    if (isdigit(c)) {
+    if (isDigitChar(c)) {
         return readNumber();
     }
-    
+
     if (c == '"') {
         return readString();
     }
-    
-    if (isalpha(c) || c == '_') {
+
+    if (isAlphaChar(c) || c == '_') {
         return readIdentifier();
     }
     
@@ -282,7 +332,7 @@ std::vector<Token> BasicLexer::tokenize() {
 // BasicParser Implementation
 // =============================================================================
 
-BasicParser::BasicParser(const std::vector<Token>& tokens) : tokens(tokens), current(0) {}
+BasicParser::BasicParser(const std::vector<Token>& tokens) : tokens(tokens), current(0), hadError(false) {}
 
 Token BasicParser::peek(int offset) {
     size_t pos = current + offset;
@@ -307,11 +357,14 @@ bool BasicParser::check(TokenType type) {
     return peek().type == type;
 }
 
+void BasicParser::error(const String& message) {
+    hadError = true;
+    Serial.println("Parse error: " + message);
+}
+
 Token BasicParser::consume(TokenType type, const String& message) {
     if (check(type)) return advance();
-    
-    // Error handling - for now just return invalid token
-    Serial.println("Parse error: " + message);
+    error(message);
     return Token(TOK_INVALID);
 }
 
@@ -363,60 +416,94 @@ ASTNode* BasicParser::parseLoop() {
     return loop;
 }
 
+bool BasicParser::parseParamLiteral(ASTNode* paramDecl) {
+    bool negative = match(TOK_MINUS);
+
+    if (check(TOK_NUMBER)) {
+        Token numToken = advance();
+        ASTNode* numNode = new ASTNode(NODE_NUMBER, numToken);
+        float v = numToken.numberValue;
+        if (negative) v = -v;
+        numNode->value = Value(v);
+        paramDecl->addChild(numNode);
+        return true;
+    }
+
+    if (negative) {
+        error("Expected number after '-' in parameter attributes");
+        return false;
+    }
+
+    if (match(TOK_TRUE)) {
+        ASTNode* numNode = new ASTNode(NODE_NUMBER);
+        numNode->value = Value(1.0f);
+        paramDecl->addChild(numNode);
+        return true;
+    }
+
+    if (match(TOK_FALSE)) {
+        ASTNode* numNode = new ASTNode(NODE_NUMBER);
+        numNode->value = Value(0.0f);
+        paramDecl->addChild(numNode);
+        return true;
+    }
+
+    if (check(TOK_STRING)) {
+        Token strToken = advance();
+        ASTNode* strNode = new ASTNode(NODE_STRING, strToken);
+        strNode->value = Value(strToken.value);
+        paramDecl->addChild(strNode);
+        return true;
+    }
+
+    if (check(TOK_LBRACKET)) {
+        advance();
+        if (!check(TOK_RBRACKET)) {
+            do {
+                Token strToken = consume(TOK_STRING, "Expected string in enum array");
+                ASTNode* strNode = new ASTNode(NODE_STRING, strToken);
+                strNode->value = Value(strToken.value);
+                paramDecl->addChild(strNode);
+            } while (match(TOK_COMMA));
+        }
+        consume(TOK_RBRACKET, "Expected ']' after enum values");
+        return true;
+    }
+
+    error("Unexpected token in parameter attributes");
+    return false;
+}
+
 ASTNode* BasicParser::parseParamDecl() {
     consume(TOK_PARAM, "Expected 'param'");
-    
+
     Token nameToken = consume(TOK_IDENTIFIER, "Expected parameter name");
     ASTNode* paramDecl = new ASTNode(NODE_PARAM_DECL, nameToken);
     paramDecl->name = nameToken.value;
-    
-    // Parse parameter type and attributes
-    if (match(TOK_IDENTIFIER)) {
-        Token typeToken = tokens[current - 1]; // Get the token we just consumed
-        String paramType = typeToken.value;
-        
-        // Store the parameter type in the value field as a string
-        paramDecl->value = Value(paramType);
-        
-        // Parse parameter attributes in parentheses
-        if (match(TOK_LPAREN)) {
-            // For simplicity, we'll store parameter attributes as child nodes
-            // instead of trying to use arrayValue which doesn't exist
-            
-            if (!check(TOK_RPAREN)) {
-                do {
-                    if (check(TOK_NUMBER)) {
-                        Token numToken = advance();
-                        ASTNode* numNode = new ASTNode(NODE_NUMBER, numToken);
-                        numNode->value = Value(numToken.value.toDouble());
-                        paramDecl->addChild(numNode);
-                    } else if (check(TOK_STRING)) {
-                        Token strToken = advance();
-                        ASTNode* strNode = new ASTNode(NODE_STRING, strToken);
-                        strNode->value = Value(strToken.value);
-                        paramDecl->addChild(strNode);
-                    } else if (check(TOK_LBRACKET)) {
-                        // Parse string array for enum values
-                        advance(); // consume '['
-                        
-                        if (!check(TOK_RBRACKET)) {
-                            do {
-                                Token strToken = consume(TOK_STRING, "Expected string in enum array");
-                                ASTNode* strNode = new ASTNode(NODE_STRING, strToken);
-                                strNode->value = Value(strToken.value);
-                                paramDecl->addChild(strNode);
-                            } while (match(TOK_COMMA));
-                        }
-                        
-                        consume(TOK_RBRACKET, "Expected ']' after enum values");
-                    }
-                } while (match(TOK_COMMA));
-            }
-            
-            consume(TOK_RPAREN, "Expected ')' after parameter attributes");
-        }
+
+    if (!match(TOK_IDENTIFIER)) {
+        error("Expected parameter type (number, boolean, or enum)");
+        return paramDecl;
     }
-    
+
+    Token typeToken = tokens[current - 1];
+    String paramType = typeToken.value;
+    if (paramType != "number" && paramType != "boolean" && paramType != "enum") {
+        error("Unknown parameter type '" + paramType + "' (expected number, boolean, or enum)");
+    }
+    paramDecl->value = Value(paramType);
+
+    if (match(TOK_LPAREN)) {
+        if (!check(TOK_RPAREN)) {
+            do {
+                if (!parseParamLiteral(paramDecl)) {
+                    break;
+                }
+            } while (match(TOK_COMMA));
+        }
+        consume(TOK_RPAREN, "Expected ')' after parameter attributes");
+    }
+
     return paramDecl;
 }
 
@@ -524,10 +611,10 @@ ASTNode* BasicParser::parseIf() {
     
     ASTNode* ifNode = new ASTNode(NODE_IF, ifToken);
     ifNode->addChild(parseExpression()); // condition
-    ifNode->addChild(parseBlock()); // then block
-    
+    ifNode->addChild(parseBlock(true, true)); // then block may end at else
+
     if (match(TOK_ELSE)) {
-        ifNode->addChild(parseBlock()); // else block
+        ifNode->addChild(parseBlock(true, false));
     }
     
     return ifNode;
@@ -569,28 +656,35 @@ ASTNode* BasicParser::parseFor() {
         forNode->addChild(stepNode);
     }
     
-    forNode->addChild(parseBlock()); // body
-    
+    forNode->addChild(parseBlock(false)); // body terminated by next
+
     consume(TOK_NEXT, "Expected 'next'");
     
     return forNode;
 }
 
-ASTNode* BasicParser::parseBlock() {
+ASTNode* BasicParser::parseBlock(bool requireEnd, bool allowElse) {
     ASTNode* block = new ASTNode(NODE_BLOCK);
-    
-    while (!check(TOK_EOF) && !check(TOK_END) && !check(TOK_ELSE) && !check(TOK_NEXT)) {
+
+    while (!check(TOK_EOF) && !check(TOK_END) && !check(TOK_NEXT)) {
         if (check(TOK_NEWLINE)) {
             advance();
             continue;
         }
+        if (check(TOK_ELSE)) {
+            if (allowElse) break;
+            error("Unexpected 'else'");
+            break;
+        }
         block->addChild(parseStatement());
     }
-    
-    if (check(TOK_END)) {
-        advance();
+
+    if (requireEnd) {
+        if (!(allowElse && check(TOK_ELSE))) {
+            consume(TOK_END, "Expected 'end'");
+        }
     }
-    
+
     return block;
 }
 
@@ -675,17 +769,32 @@ ASTNode* BasicParser::parseTerm() {
 }
 
 ASTNode* BasicParser::parseFactor() {
-    ASTNode* expr = parseUnary();
-    
-    while (match(TOK_DIVIDE) || match(TOK_MULTIPLY) || match(TOK_MODULO) || match(TOK_POWER)) {
+    ASTNode* expr = parsePower();
+
+    while (match(TOK_DIVIDE) || match(TOK_MULTIPLY) || match(TOK_MODULO)) {
         Token op = tokens[current - 1];
-        ASTNode* right = parseUnary();
+        ASTNode* right = parsePower();
         ASTNode* binary = new ASTNode(NODE_BINARY_OP, op);
         binary->addChild(expr);
         binary->addChild(right);
         expr = binary;
     }
-    
+
+    return expr;
+}
+
+ASTNode* BasicParser::parsePower() {
+    ASTNode* expr = parseUnary();
+
+    if (match(TOK_POWER)) {
+        Token op = tokens[current - 1];
+        ASTNode* right = parsePower();
+        ASTNode* binary = new ASTNode(NODE_BINARY_OP, op);
+        binary->addChild(expr);
+        binary->addChild(right);
+        return binary;
+    }
+
     return expr;
 }
 
@@ -708,7 +817,19 @@ ASTNode* BasicParser::parsePrimary() {
         number->value = Value(token.numberValue);
         return number;
     }
-    
+
+    if (match(TOK_TRUE)) {
+        ASTNode* number = new ASTNode(NODE_NUMBER);
+        number->value = Value(1.0f);
+        return number;
+    }
+
+    if (match(TOK_FALSE)) {
+        ASTNode* number = new ASTNode(NODE_NUMBER);
+        number->value = Value(0.0f);
+        return number;
+    }
+
     if (match(TOK_STRING)) {
         Token token = tokens[current - 1];
         ASTNode* string = new ASTNode(NODE_STRING, token);
@@ -759,16 +880,20 @@ ASTNode* BasicParser::parsePrimary() {
         return parseFunctionCall();
     }
     
-    Serial.println("Unexpected token in primary at " + String(current) );
+    error("Unexpected token in primary at " + String((int)current));
     Token token = peek();
     int offset = 1;
     constexpr int MAX_TOKEN_LOOKAHEAD = 20;
-    while(token.type != Token(TOK_NEWLINE).type && offset < MAX_TOKEN_LOOKAHEAD) {
+    while (token.type != TOK_NEWLINE && token.type != TOK_EOF && offset < MAX_TOKEN_LOOKAHEAD) {
         Serial.print(token.value);
         token = peek(offset);
         offset++;
     }
-    return new ASTNode(NODE_NUMBER); // Return dummy node
+    Serial.println();
+    if (!check(TOK_EOF)) {
+        advance();
+    }
+    return new ASTNode(NODE_NUMBER);
 }
 
 ASTNode* BasicParser::parseFunctionCall() {
@@ -798,17 +923,48 @@ ASTNode* BasicParser::parse() {
 // BasicInterpreter Implementation
 // =============================================================================
 
-BasicInterpreter::BasicInterpreter(CRGB* ledArray, int ledCount) 
-    : leds(ledArray), numLeds(ledCount), showCalled(false), setupNode(nullptr), loopNode(nullptr) {
-    // Initialize built-in variables
-    variables["PI"] = Value(M_PI);
-    variables["E"] = Value(M_E);
+BasicInterpreter::BasicInterpreter(CRGB* ledArray, int ledCount)
+    : leds(ledArray), numLeds(ledCount), showCalled(false), ownsPhysicalOutput(true),
+      autoShow(true), outputBrightness(255), setupNode(nullptr), loopNode(nullptr) {
+    reset();
+}
+
+int BasicInterpreter::internName(const String& name) {
+    auto it = nameToSlot.find(name);
+    if (it != nameToSlot.end()) return it->second;
+    int id = (int)slots.size();
+    nameToSlot[name] = id;
+    slots.push_back(Value(0.0f));
+    return id;
+}
+
+int BasicInterpreter::ensureSlot(ASTNode* node) {
+    if (!node) return internName("");
+    if (node->slot < 0) {
+        node->slot = internName(node->name);
+    }
+    return node->slot;
+}
+
+void BasicInterpreter::reset() {
+    setupNode = nullptr;
+    loopNode = nullptr;
+    showCalled = false;
+    outputBrightness = 255;
+    parameters.clear();
+    nameToSlot.clear();
+    slots.clear();
+    internName("PI");
+    internName("E");
+    slots[nameToSlot["PI"]] = Value((float)M_PI);
+    slots[nameToSlot["E"]] = Value((float)M_E);
 }
 
 void BasicInterpreter::run(ASTNode* program) {
+    setupNode = nullptr;
+    loopNode = nullptr;
     if (!program || program->type != NODE_PROGRAM) return;
-    
-    // Find setup and loop functions, and process parameter declarations
+
     for (ASTNode* child : program->children) {
         if (child->type == NODE_SETUP) {
             setupNode = child;
@@ -833,38 +989,36 @@ void BasicInterpreter::processParameterDeclaration(ASTNode* node) {
     
     if (paramType == "boolean") {
         param.type = PARAM_BOOLEAN;
-        param.defaultValue = Value(node->children.size() > 0 ? (node->children[0]->value.numberValue != 0) : false);
+        param.defaultValue = Value(node->children.size() > 0 ? (node->children[0]->value.asNumber() != 0) : 0.0f);
         param.currentValue = param.defaultValue;
         param.minValue = 0;
         param.maxValue = 1;
         param.stepValue = 1;
     } else if (paramType == "number") {
         param.type = PARAM_NUMBER;
-        // Format: param name number(default, min, max, step)
-        param.defaultValue = Value(node->children.size() > 0 ? node->children[0]->value.numberValue : 0.0);
+        param.defaultValue = Value(node->children.size() > 0 ? node->children[0]->value.asNumber() : 0.0f);
         param.currentValue = param.defaultValue;
-        param.minValue = node->children.size() > 1 ? node->children[1]->value.numberValue : 0.0;
-        param.maxValue = node->children.size() > 2 ? node->children[2]->value.numberValue : 100.0;
-        param.stepValue = node->children.size() > 3 ? node->children[3]->value.numberValue : 1.0;
+        param.minValue = node->children.size() > 1 ? node->children[1]->value.asNumber() : 0.0f;
+        param.maxValue = node->children.size() > 2 ? node->children[2]->value.asNumber() : 100.0f;
+        param.stepValue = node->children.size() > 3 ? node->children[3]->value.asNumber() : 1.0f;
     } else if (paramType == "enum") {
         param.type = PARAM_ENUM;
-        // Extract enum values from child nodes (all should be strings)
         param.enumValues.clear();
         for (ASTNode* child : node->children) {
             if (child->value.type == VAL_STRING) {
                 param.enumValues.push_back(child->value.stringValue);
             }
         }
-        param.defaultValue = Value(0.0); // Default to first enum value
+        param.defaultValue = Value(0.0f);
         param.currentValue = param.defaultValue;
         param.minValue = 0;
-        param.maxValue = param.enumValues.size() - 1;
+        param.maxValue = param.enumValues.empty() ? 0.0f : (float)(param.enumValues.size() - 1);
         param.stepValue = 1;
+    } else {
+        return;
     }
-    
-    // Add the parameter and create a variable for it
+
     addParameter(param);
-    variables[paramName] = param.currentValue;
 }
 
 void BasicInterpreter::runSetup() {
@@ -875,16 +1029,15 @@ void BasicInterpreter::runSetup() {
 
 void BasicInterpreter::runLoop(unsigned long timeMs) {
     if (loopNode && loopNode->children.size() >= 2) {
-        // Set the time parameter
         if (loopNode->children[0]->type == NODE_IDENTIFIER) {
-            variables[loopNode->children[0]->name] = Value((double)timeMs);
+            int slot = ensureSlot(loopNode->children[0]);
+            slots[slot] = Value((float)timeMs);
         }
-        
+
         showCalled = false;
-        execute(loopNode->children[1]); // Execute the block
-        
-        // Auto-show if not explicitly called
-        if (!showCalled) {
+        execute(loopNode->children[1]);
+
+        if (!showCalled && autoShow) {
             FastLED.show();
         }
     }
@@ -892,98 +1045,116 @@ void BasicInterpreter::runLoop(unsigned long timeMs) {
 
 Value BasicInterpreter::evaluate(ASTNode* node) {
     if (!node) return Value(0);
-    
+
     switch (node->type) {
         case NODE_NUMBER:
         case NODE_STRING:
             return node->value;
-            
-        case NODE_IDENTIFIER:
-            if (variables.find(node->name) != variables.end()) {
-                return variables[node->name];
-            }
-            return Value(0);
-            
+
+        case NODE_IDENTIFIER: {
+            int slot = ensureSlot(node);
+            return slots[slot];
+        }
+
         case NODE_BINARY_OP: {
             Value left = evaluate(node->children[0]);
             Value right = evaluate(node->children[1]);
-            
+            float lv = left.asNumber();
+            float rv = right.asNumber();
+
             switch (node->token.type) {
                 case TOK_PLUS:
-                    return Value(left.numberValue + right.numberValue);
-                case TOK_MINUS:
-                    return Value(left.numberValue - right.numberValue);
-                case TOK_MULTIPLY:
-                    return Value(left.numberValue * right.numberValue);
-                case TOK_DIVIDE:
-                    if (right.numberValue != 0) {
-                        return Value(left.numberValue / right.numberValue);
+                    if (left.type == VAL_STRING || right.type == VAL_STRING) {
+                        auto toString = [](const Value& v) -> String {
+                            if (v.type == VAL_STRING) return v.stringValue;
+                            return String(v.asNumber());
+                        };
+                        return Value(toString(left) + toString(right));
                     }
+                    return Value(lv + rv);
+                case TOK_MINUS:
+                    return Value(lv - rv);
+                case TOK_MULTIPLY:
+                    return Value(lv * rv);
+                case TOK_DIVIDE:
+                    if (rv != 0) return Value(lv / rv);
                     return Value(0);
                 case TOK_MODULO:
-                    if (right.numberValue != 0) {
-                        return Value(fmod(left.numberValue, right.numberValue));
-                    }
+                    if (rv != 0) return Value(fmodf(lv, rv));
                     return Value(0);
                 case TOK_POWER:
-                    return Value(pow(left.numberValue, right.numberValue));
+                    return Value(powf(lv, rv));
                 case TOK_EQUALS:
-                    return Value(left.numberValue == right.numberValue ? 1.0 : 0.0);
-                case TOK_NOT_EQUALS:
-                    return Value(left.numberValue != right.numberValue ? 1.0 : 0.0);
+                case TOK_NOT_EQUALS: {
+                    bool eq;
+                    if (left.type == VAL_STRING && right.type == VAL_STRING) {
+                        eq = left.stringValue == right.stringValue;
+                    } else if (left.type == VAL_COLOR && right.type == VAL_COLOR) {
+                        eq = left.colorValue == right.colorValue;
+                    } else if (left.type == VAL_STRING || right.type == VAL_STRING ||
+                               left.type == VAL_COLOR || right.type == VAL_COLOR) {
+                        eq = false;
+                    } else {
+                        eq = lv == rv;
+                    }
+                    float result = eq ? 1.0f : 0.0f;
+                    if (node->token.type == TOK_NOT_EQUALS) result = eq ? 0.0f : 1.0f;
+                    return Value(result);
+                }
                 case TOK_LESS_THAN:
-                    return Value(left.numberValue < right.numberValue ? 1.0 : 0.0);
+                    return Value(lv < rv ? 1.0f : 0.0f);
                 case TOK_GREATER_THAN:
-                    return Value(left.numberValue > right.numberValue ? 1.0 : 0.0);
+                    return Value(lv > rv ? 1.0f : 0.0f);
                 case TOK_LESS_EQUAL:
-                    return Value(left.numberValue <= right.numberValue ? 1.0 : 0.0);
+                    return Value(lv <= rv ? 1.0f : 0.0f);
                 case TOK_GREATER_EQUAL:
-                    return Value(left.numberValue >= right.numberValue ? 1.0 : 0.0);
+                    return Value(lv >= rv ? 1.0f : 0.0f);
                 case TOK_AND:
-                    return Value((left.numberValue != 0 && right.numberValue != 0) ? 1.0 : 0.0);
+                    return Value((lv != 0 && rv != 0) ? 1.0f : 0.0f);
                 case TOK_OR:
-                    return Value((left.numberValue != 0 || right.numberValue != 0) ? 1.0 : 0.0);
+                    return Value((lv != 0 || rv != 0) ? 1.0f : 0.0f);
                 default:
                     return Value(0);
             }
         }
-        
+
         case NODE_UNARY_OP: {
             Value operand = evaluate(node->children[0]);
-            
+            float ov = operand.asNumber();
+
             switch (node->token.type) {
                 case TOK_MINUS:
-                    return Value(-operand.numberValue);
+                    return Value(-ov);
                 case TOK_NOT:
-                    return Value(operand.numberValue == 0 ? 1.0 : 0.0);
+                    return Value(ov == 0 ? 1.0f : 0.0f);
                 default:
                     return operand;
             }
         }
-        
+
         case NODE_FUNCTION_CALL: {
             std::vector<Value> args;
+            args.reserve(node->children.size());
             for (size_t i = 0; i < node->children.size(); i++) {
                 args.push_back(evaluate(node->children[i]));
             }
-            return callFunction(node->name, args);
+            return callFunction(node->token.type, args);
         }
-        
+
         case NODE_ARRAY_ACCESS: {
             if (node->children.size() >= 2) {
-                String varName = node->children[0]->name;
+                int slot = ensureSlot(node->children[0]);
                 Value indexValue = evaluate(node->children[1]);
-                int index = (int)indexValue.numberValue;
-                
-                if (variables.find(varName) != variables.end() && 
-                    variables[varName].type == VAL_ARRAY &&
-                    index >= 0 && index < variables[varName].arrayValue.size()) {
-                    return variables[varName].arrayValue[index];
+                int index = (int)indexValue.asNumber();
+
+                if (slots[slot].type == VAL_ARRAY &&
+                    index >= 0 && index < (int)slots[slot].arrayValue.size()) {
+                    return slots[slot].arrayValue[index];
                 }
             }
             return Value(0);
         }
-        
+
         default:
             return Value(0);
     }
@@ -1001,93 +1172,105 @@ void BasicInterpreter::execute(ASTNode* node) {
             
         case NODE_ASSIGNMENT: {
             if (node->children.size() >= 2) {
-                String varName = node->children[0]->name;
-                Value value = evaluate(node->children[1]);
-                variables[varName] = value;
+                int slot = ensureSlot(node->children[0]);
+                slots[slot] = evaluate(node->children[1]);
             }
             break;
         }
-        
+
         case NODE_IF: {
             if (node->children.size() >= 2) {
                 Value condition = evaluate(node->children[0]);
-                if (condition.numberValue != 0) {
-                    execute(node->children[1]); // then block
+                if (condition.asNumber() != 0) {
+                    execute(node->children[1]);
                 } else if (node->children.size() >= 3) {
-                    execute(node->children[2]); // else block
+                    execute(node->children[2]);
                 }
             }
             break;
         }
-        
+
         case NODE_WHILE: {
             if (node->children.size() >= 2) {
+                int iterations = 0;
                 while (true) {
                     Value condition = evaluate(node->children[0]);
-                    if (condition.numberValue == 0) break;
+                    if (condition.asNumber() == 0) break;
+                    if (++iterations > kMaxLoopIterations) {
+                        Serial.println("Runtime error: while loop exceeded iteration limit");
+                        break;
+                    }
                     execute(node->children[1]);
                 }
             }
             break;
         }
-        
+
         case NODE_FOR: {
             if (node->children.size() >= 5) {
-                String varName = node->children[0]->name;
+                int slot = ensureSlot(node->children[0]);
                 Value start = evaluate(node->children[1]);
                 Value end = evaluate(node->children[2]);
                 Value step = evaluate(node->children[3]);
-                
-                variables[varName] = start;
-                
+                float stepN = step.asNumber();
+                float endN = end.asNumber();
+
+                if (stepN == 0) {
+                    Serial.println("Runtime error: for step cannot be 0");
+                    break;
+                }
+
+                slots[slot] = start;
+                int iterations = 0;
                 while (true) {
-                    Value current = variables[varName];
-                    if ((step.numberValue > 0 && current.numberValue > end.numberValue) ||
-                        (step.numberValue < 0 && current.numberValue < end.numberValue)) {
+                    float current = slots[slot].asNumber();
+                    if ((stepN > 0 && current > endN) || (stepN < 0 && current < endN)) {
                         break;
                     }
-                    
-                    execute(node->children[4]); // body
-                    
-                    variables[varName] = Value(current.numberValue + step.numberValue);
+                    if (++iterations > kMaxLoopIterations) {
+                        Serial.println("Runtime error: for loop exceeded iteration limit");
+                        break;
+                    }
+                    execute(node->children[4]);
+                    slots[slot] = Value(current + stepN);
                 }
             }
             break;
         }
-        
+
         case NODE_FUNCTION_CALL: {
             std::vector<Value> args;
+            args.reserve(node->children.size());
             for (size_t i = 0; i < node->children.size(); i++) {
                 args.push_back(evaluate(node->children[i]));
             }
-            callFunction(node->name, args);
+            callFunction(node->token.type, args);
             break;
         }
-        
+
         case NODE_ARRAY_DECLARATION: {
             if (node->children.size() >= 2) {
-                String varName = node->children[0]->name;
+                int slot = ensureSlot(node->children[0]);
                 Value sizeValue = evaluate(node->children[1]);
-                int size = (int)sizeValue.numberValue;
-                
-                // Create array with specified size, initialized to 0
-                std::vector<Value> arrayData(size, Value(0.0));
-                variables[varName] = Value(arrayData);
+                int size = (int)sizeValue.asNumber();
+                if (size < 0) size = 0;
+                if (size > kMaxArraySize) size = kMaxArraySize;
+                std::vector<Value> arrayData(size, Value(0.0f));
+                slots[slot] = Value(arrayData);
             }
             break;
         }
-        
+
         case NODE_ARRAY_ASSIGNMENT: {
             if (node->children.size() >= 3) {
-                String varName = node->children[0]->name;
+                int slot = ensureSlot(node->children[0]);
                 Value indexValue = evaluate(node->children[1]);
                 Value assignValue = evaluate(node->children[2]);
-                int index = (int)indexValue.numberValue;
-                
-                if (variables.find(varName) != variables.end() && 
-                    variables[varName].type == VAL_ARRAY &&
-                    index >= 0 && index < variables[varName].arrayValue.size()) {
-                    variables[varName].arrayValue[index] = assignValue;
+                int index = (int)indexValue.asNumber();
+
+                if (slots[slot].type == VAL_ARRAY &&
+                    index >= 0 && index < (int)slots[slot].arrayValue.size()) {
+                    slots[slot].arrayValue[index] = assignValue;
                 }
             }
             break;
@@ -1099,169 +1282,124 @@ void BasicInterpreter::execute(ASTNode* node) {
     }
 }
 
-Value BasicInterpreter::callFunction(const String& name, const std::vector<Value>& args) {
-    // Check if it's a math function
-    TokenType func = TOK_INVALID;
-    if (name == "sin") func = TOK_SIN;
-    else if (name == "cos") func = TOK_COS;
-    else if (name == "tan") func = TOK_TAN;
-    else if (name == "sqrt") func = TOK_SQRT;
-    else if (name == "pow") func = TOK_POW;
-    else if (name == "log") func = TOK_LOG;
-    else if (name == "ln") func = TOK_LN;
-    else if (name == "abs") func = TOK_ABS;
-    else if (name == "floor") func = TOK_FLOOR;
-    else if (name == "ceil") func = TOK_CEIL;
-    else if (name == "round") func = TOK_ROUND;
-    else if (name == "min") func = TOK_MIN;
-    else if (name == "max") func = TOK_MAX;
-    else if (name == "random") func = TOK_RANDOM;
-    else if (name == "map") func = TOK_MAP;
-    else if (name == "millis") func = TOK_MILLIS;
-    else if (name == "delay") func = TOK_DELAY;
-    else if (name == "hsv_to_rgb") func = TOK_HSV_TO_RGB;
-    else if (name == "wheel") func = TOK_WHEEL;
-    
-    if (func != TOK_INVALID) {
-        return callMathFunction(func, args);
+Value BasicInterpreter::callFunction(TokenType func, const std::vector<Value>& args) {
+    switch (func) {
+        case TOK_SIN: case TOK_COS: case TOK_TAN: case TOK_SQRT: case TOK_POW:
+        case TOK_LOG: case TOK_LN: case TOK_ABS: case TOK_FLOOR: case TOK_CEIL:
+        case TOK_ROUND: case TOK_MIN: case TOK_MAX: case TOK_RANDOM: case TOK_MAP:
+        case TOK_MILLIS: case TOK_DELAY: case TOK_HSV_TO_RGB: case TOK_WHEEL:
+            return callMathFunction(func, args);
+        case TOK_SETLED: case TOK_SETCOLOR: case TOK_SETHSV: case TOK_SHOW:
+        case TOK_CLEAR: case TOK_FILL: case TOK_BRIGHTNESS: case TOK_NUMLED:
+        case TOK_HSV: case TOK_RGB: case TOK_GET_LED_R: case TOK_GET_LED_G:
+        case TOK_GET_LED_B: case TOK_SET_LED: case TOK_SET_ALL: case TOK_GET_LED_COUNT:
+            return callLedFunction(func, args);
+        default:
+            return Value(0);
     }
-    
-    // Check if it's an LED function
-    if (name == "setled") func = TOK_SETLED;
-    else if (name == "setcolor") func = TOK_SETCOLOR;
-    else if (name == "sethsv") func = TOK_SETHSV;
-    else if (name == "show") func = TOK_SHOW;
-    else if (name == "clear") func = TOK_CLEAR;
-    else if (name == "fill") func = TOK_FILL;
-    else if (name == "brightness") func = TOK_BRIGHTNESS;
-    else if (name == "numled") func = TOK_NUMLED;
-    else if (name == "hsv") func = TOK_HSV;
-    else if (name == "rgb") func = TOK_RGB;
-    else if (name == "get_led_r") func = TOK_GET_LED_R;
-    else if (name == "get_led_g") func = TOK_GET_LED_G;
-    else if (name == "get_led_b") func = TOK_GET_LED_B;
-    else if (name == "set_led") func = TOK_SET_LED;
-    else if (name == "set_all") func = TOK_SET_ALL;
-    else if (name == "get_led_count") func = TOK_GET_LED_COUNT;
-    
-    if (func != TOK_INVALID) {
-        return callLedFunction(func, args);
-    }
-    
-    return Value(0);
 }
 
 Value BasicInterpreter::callMathFunction(TokenType func, const std::vector<Value>& args) {
     switch (func) {
         case TOK_SIN:
-            if (args.size() >= 1) return Value(sin(args[0].numberValue));
+            if (args.size() >= 1) return Value(sinf(args[0].asNumber()));
             break;
         case TOK_COS:
-            if (args.size() >= 1) return Value(cos(args[0].numberValue));
+            if (args.size() >= 1) return Value(cosf(args[0].asNumber()));
             break;
         case TOK_TAN:
-            if (args.size() >= 1) return Value(tan(args[0].numberValue));
+            if (args.size() >= 1) return Value(tanf(args[0].asNumber()));
             break;
         case TOK_SQRT:
-            if (args.size() >= 1) return Value(sqrt(args[0].numberValue));
-            break;
-        case TOK_POW:
-            if (args.size() >= 2) return Value(pow(args[0].numberValue, args[1].numberValue));
-            break;
-        case TOK_LOG:
-            if (args.size() >= 1) return Value(log10(args[0].numberValue));
-            break;
-        case TOK_LN:
-            if (args.size() >= 1) return Value(log(args[0].numberValue));
-            break;
-        case TOK_ABS:
-            if (args.size() >= 1) return Value(abs(args[0].numberValue));
-            break;
-        case TOK_FLOOR:
-            if (args.size() >= 1) return Value(floor(args[0].numberValue));
-            break;
-        case TOK_CEIL:
-            if (args.size() >= 1) return Value(ceil(args[0].numberValue));
-            break;
-        case TOK_ROUND:
-            if (args.size() >= 1) return Value(round(args[0].numberValue));
-            break;
-        case TOK_MIN:
-            if (args.size() >= 2) return Value(min(args[0].numberValue, args[1].numberValue));
-            break;
-        case TOK_MAX:
-            if (args.size() >= 2) return Value(max(args[0].numberValue, args[1].numberValue));
-            break;
-        case TOK_RANDOM:
-            // Use hardware RNG on ESP32, Arduino random() elsewhere
             if (args.size() >= 1) {
-                // random(max) - return 0 to max-1
-                double maxVal = args[0].numberValue;
-                return Value(fmod(ledbasic_random(), maxVal));
-            } else {
-                // random() - return 0.0 to 1.0
-                return Value((double)ledbasic_random() / 4294967295.0);
+                float x = args[0].asNumber();
+                if (x < 0) return Value(0);
+                return Value(sqrtf(x));
             }
             break;
+        case TOK_POW:
+            if (args.size() >= 2) return Value(powf(args[0].asNumber(), args[1].asNumber()));
+            break;
+        case TOK_LOG:
+            if (args.size() >= 1) {
+                float x = args[0].asNumber();
+                if (x <= 0) return Value(0);
+                return Value(log10f(x));
+            }
+            break;
+        case TOK_LN:
+            if (args.size() >= 1) {
+                float x = args[0].asNumber();
+                if (x <= 0) return Value(0);
+                return Value(logf(x));
+            }
+            break;
+        case TOK_ABS:
+            if (args.size() >= 1) return Value(fabsf(args[0].asNumber()));
+            break;
+        case TOK_FLOOR:
+            if (args.size() >= 1) return Value(floorf(args[0].asNumber()));
+            break;
+        case TOK_CEIL:
+            if (args.size() >= 1) return Value(ceilf(args[0].asNumber()));
+            break;
+        case TOK_ROUND:
+            if (args.size() >= 1) return Value(roundf(args[0].asNumber()));
+            break;
+        case TOK_MIN:
+            if (args.size() >= 2) return Value(min(args[0].asNumber(), args[1].asNumber()));
+            break;
+        case TOK_MAX:
+            if (args.size() >= 2) return Value(max(args[0].asNumber(), args[1].asNumber()));
+            break;
+        case TOK_RANDOM:
+            if (args.size() >= 1) {
+                float maxVal = args[0].asNumber();
+                if (maxVal <= 0) return Value(0);
+                uint32_t span = (uint32_t)maxVal;
+                if (span == 0) return Value(0);
+                return Value((float)(ledbasic_random() % span));
+            }
+            return Value((float)ledbasic_random() / LEDBASIC_RANDOM_MAX);
         case TOK_MAP:
-            // map(value, fromLow, fromHigh, toLow, toHigh)
             if (args.size() >= 5) {
-                double value = args[0].numberValue;
-                double fromLow = args[1].numberValue;
-                double fromHigh = args[2].numberValue;
-                double toLow = args[3].numberValue;
-                double toHigh = args[4].numberValue;
-                
-                double mapped = (value - fromLow) * (toHigh - toLow) / (fromHigh - fromLow) + toLow;
-                return Value(mapped);
+                float value = args[0].asNumber();
+                float fromLow = args[1].asNumber();
+                float fromHigh = args[2].asNumber();
+                float toLow = args[3].asNumber();
+                float toHigh = args[4].asNumber();
+                float denom = fromHigh - fromLow;
+                if (denom == 0) return Value(toLow);
+                return Value((value - fromLow) * (toHigh - toLow) / denom + toLow);
             }
             break;
         case TOK_MILLIS:
-            // millis() - return current time in milliseconds
-            return Value(millis());
+            return Value((float)millis());
         case TOK_DELAY:
-            // delay(ms) - pause execution
             if (args.size() >= 1) {
-                int delayMs = (int)args[0].numberValue;
-                delay(delayMs);
+                int delayMs = (int)args[0].asNumber();
+                if (delayMs > 0) delay(delayMs);
             }
             break;
         case TOK_HSV_TO_RGB: {
-            // hsv_to_rgb(h, s, v) - convert HSV to RGB, returns red component (simplified)
             if (args.size() >= 3) {
-                int h = ((int)args[0].numberValue) % 360;
-                int s = constrain((int)args[1].numberValue, 0, 100);
-                int v = constrain((int)args[2].numberValue, 0, 100);
-                
-                // Convert to FastLED CHSV and back to get RGB
-                CHSV hsv(h * 255 / 360, s * 255 / 100, v * 255 / 100);
-                CRGB rgb;
-                hsv2rgb_rainbow(hsv, rgb);
-                
-                // For now, just return the red component
-                // In a real implementation, this would need to set multiple variables
-                return Value(rgb.r);
+                int h = (int)args[0].asNumber();
+                int s = (int)args[1].asNumber();
+                int v = (int)args[2].asNumber();
+                // Accept 0-100 saturation/value (prompt style) or 0-255 (sethsv style)
+                if (s <= 100 && v <= 100) {
+                    s = s * 255 / 100;
+                    v = v * 255 / 100;
+                }
+                CRGB rgb = hsvToCRGB(h, s, v);
+                return Value::color(rgb.r, rgb.g, rgb.b);
             }
             break;
         }
         case TOK_WHEEL: {
-            // wheel(pos) - rainbow color wheel, returns red component (simplified)
             if (args.size() >= 1) {
-                int pos = ((int)args[0].numberValue) % 256;
-                CRGB color;
-                
-                if (pos < 85) {
-                    color = CRGB(pos * 3, 255 - pos * 3, 0);
-                } else if (pos < 170) {
-                    pos -= 85;
-                    color = CRGB(255 - pos * 3, 0, pos * 3);
-                } else {
-                    pos -= 170;
-                    color = CRGB(0, pos * 3, 255 - pos * 3);
-                }
-                
-                // For now, just return the red component
-                return Value(color.r);
+                CRGB color = wheelToCRGB((int)args[0].asNumber());
+                return Value::color(color.r, color.g, color.b);
             }
             break;
         }
@@ -1271,171 +1409,147 @@ Value BasicInterpreter::callMathFunction(TokenType func, const std::vector<Value
     return Value(0);
 }
 
+void BasicInterpreter::applyLedColor(int index, const CRGB& color) {
+    if (index >= 0 && index < numLeds) {
+        leds[index] = color;
+    }
+}
+
 Value BasicInterpreter::callLedFunction(TokenType func, const std::vector<Value>& args) {
     switch (func) {
-        case TOK_SETLED: {
-            // setled(index, r, g, b)
+        case TOK_SETLED:
+        case TOK_SET_LED:
+        case TOK_SETCOLOR: {
             if (args.size() >= 4) {
-                int index = (int)args[0].numberValue;
-                int r = constrain((int)args[1].numberValue, 0, 255);
-                int g = constrain((int)args[2].numberValue, 0, 255);
-                int b = constrain((int)args[3].numberValue, 0, 255);
-                
-                if (index >= 0 && index < numLeds) {
-                    leds[index] = CRGB(r, g, b);
-                }
+                int index = (int)args[0].asNumber();
+                int r = constrain((int)args[1].asNumber(), 0, 255);
+                int g = constrain((int)args[2].asNumber(), 0, 255);
+                int b = constrain((int)args[3].asNumber(), 0, 255);
+                applyLedColor(index, CRGB(r, g, b));
+            } else if (args.size() >= 2) {
+                int index = (int)args[0].asNumber();
+                applyLedColor(index, args[1].asCRGB());
             }
             break;
         }
-        
+
         case TOK_RGB: {
-            // rgb(r, g, b) - returns a color value (just return red component for now)
             if (args.size() >= 3) {
-                int r = constrain((int)args[0].numberValue, 0, 255);
-                return Value(r); // Simplified - in real implementation would return color struct
+                int r = constrain((int)args[0].asNumber(), 0, 255);
+                int g = constrain((int)args[1].asNumber(), 0, 255);
+                int b = constrain((int)args[2].asNumber(), 0, 255);
+                return Value::color((uint8_t)r, (uint8_t)g, (uint8_t)b);
             }
             break;
         }
-        
+
+        case TOK_HSV: {
+            if (args.size() >= 3) {
+                CRGB rgb = hsvToCRGB((int)args[0].asNumber(), (int)args[1].asNumber(), (int)args[2].asNumber());
+                return Value::color(rgb.r, rgb.g, rgb.b);
+            }
+            break;
+        }
+
         case TOK_SETHSV: {
-            // sethsv(index, h, s, v)
             if (args.size() >= 4) {
-                int index = (int)args[0].numberValue;
-                int h = (int)args[1].numberValue % 360;
-                int s = constrain((int)args[2].numberValue, 0, 255);
-                int v = constrain((int)args[3].numberValue, 0, 255);
-                
-                if (index >= 0 && index < numLeds) {
-                    leds[index] = CHSV(h * 255 / 360, s, v);
-                }
+                int index = (int)args[0].asNumber();
+                applyLedColor(index, hsvToCRGB(
+                    (int)args[1].asNumber(),
+                    (int)args[2].asNumber(),
+                    (int)args[3].asNumber()));
             }
             break;
         }
-        
+
         case TOK_CLEAR: {
-            // clear() - clear all LEDs
             for (int i = 0; i < numLeds; i++) {
                 leds[i] = CRGB::Black;
             }
             break;
         }
-        
-        case TOK_FILL: {
-            // fill(r, g, b) - fill all LEDs with color
-            if (args.size() >= 3) {
-                int r = constrain((int)args[0].numberValue, 0, 255);
-                int g = constrain((int)args[1].numberValue, 0, 255);
-                int b = constrain((int)args[2].numberValue, 0, 255);
-                
-                for (int i = 0; i < numLeds; i++) {
-                    leds[i] = CRGB(r, g, b);
-                }
-            }
-            break;
-        }
-        
-        case TOK_SHOW: {
-            // show() - update the LED strip
-            FastLED.show();
-            showCalled = true;
-            break;
-        }
-        
-        case TOK_BRIGHTNESS: {
-            // brightness(value) - set global brightness
-            if (args.size() >= 1) {
-                int brightness = constrain((int)args[0].numberValue, 0, 255);
-                FastLED.setBrightness(brightness);
-            }
-            break;
-        }
-        
-        case TOK_NUMLED: {
-            // numled() - return number of LEDs
-            return Value(numLeds);
-        }
-        
-        case TOK_GET_LED_R: {
-            // get_led_r(index) - get red component of LED
-            if (args.size() >= 1) {
-                int index = (int)args[0].numberValue;
-                if (index >= 0 && index < numLeds) {
-                    return Value(leds[index].r);
-                }
-            }
-            return Value(0);
-        }
-        
-        case TOK_GET_LED_G: {
-            // get_led_g(index) - get green component of LED
-            if (args.size() >= 1) {
-                int index = (int)args[0].numberValue;
-                if (index >= 0 && index < numLeds) {
-                    return Value(leds[index].g);
-                }
-            }
-            return Value(0);
-        }
-        
-        case TOK_GET_LED_B: {
-            // get_led_b(index) - get blue component of LED
-            if (args.size() >= 1) {
-                int index = (int)args[0].numberValue;
-                if (index >= 0 && index < numLeds) {
-                    return Value(leds[index].b);
-                }
-            }
-            return Value(0);
-        }
-        
-        case TOK_SET_LED: {
-            // set_led(index, r, g, b) - alias for setled
-            if (args.size() >= 4) {
-                int index = (int)args[0].numberValue;
-                int r = constrain((int)args[1].numberValue, 0, 255);
-                int g = constrain((int)args[2].numberValue, 0, 255);
-                int b = constrain((int)args[3].numberValue, 0, 255);
-                
-                if (index >= 0 && index < numLeds) {
-                    leds[index] = CRGB(r, g, b);
-                }
-            }
-            break;
-        }
-        
+
+        case TOK_FILL:
         case TOK_SET_ALL: {
-            // set_all(r, g, b) - alias for fill
+            CRGB color = CRGB::Black;
             if (args.size() >= 3) {
-                int r = constrain((int)args[0].numberValue, 0, 255);
-                int g = constrain((int)args[1].numberValue, 0, 255);
-                int b = constrain((int)args[2].numberValue, 0, 255);
-                
-                for (int i = 0; i < numLeds; i++) {
-                    leds[i] = CRGB(r, g, b);
+                color = CRGB(
+                    constrain((int)args[0].asNumber(), 0, 255),
+                    constrain((int)args[1].asNumber(), 0, 255),
+                    constrain((int)args[2].asNumber(), 0, 255));
+            } else if (args.size() >= 1) {
+                color = args[0].asCRGB();
+            } else {
+                break;
+            }
+            for (int i = 0; i < numLeds; i++) {
+                leds[i] = color;
+            }
+            break;
+        }
+
+        case TOK_SHOW: {
+            showCalled = true;
+            if (autoShow) {
+                FastLED.show();
+            }
+            break;
+        }
+
+        case TOK_BRIGHTNESS: {
+            if (args.size() >= 1) {
+                outputBrightness = (uint8_t)constrain((int)args[0].asNumber(), 0, 255);
+                if (ownsPhysicalOutput) {
+                    FastLED.setBrightness(outputBrightness);
                 }
             }
             break;
         }
-        
-        case TOK_GET_LED_COUNT: {
-            // get_led_count() - alias for numled
+
+        case TOK_NUMLED:
+        case TOK_GET_LED_COUNT:
             return Value(numLeds);
+
+        case TOK_GET_LED_R: {
+            if (args.size() >= 1) {
+                int index = (int)args[0].asNumber();
+                if (index >= 0 && index < numLeds) return Value(leds[index].r);
+            }
+            return Value(0);
         }
-        
+
+        case TOK_GET_LED_G: {
+            if (args.size() >= 1) {
+                int index = (int)args[0].asNumber();
+                if (index >= 0 && index < numLeds) return Value(leds[index].g);
+            }
+            return Value(0);
+        }
+
+        case TOK_GET_LED_B: {
+            if (args.size() >= 1) {
+                int index = (int)args[0].asNumber();
+                if (index >= 0 && index < numLeds) return Value(leds[index].b);
+            }
+            return Value(0);
+        }
+
         default:
             break;
     }
-    
+
     return Value(0);
 }
 
 void BasicInterpreter::setVariable(const String& name, const Value& value) {
-    variables[name] = value;
+    int slot = internName(name);
+    slots[slot] = value;
 }
 
 Value BasicInterpreter::getVariable(const String& name) {
-    if (variables.find(name) != variables.end()) {
-        return variables[name];
+    auto it = nameToSlot.find(name);
+    if (it != nameToSlot.end()) {
+        return slots[it->second];
     }
     return Value(0);
 }
@@ -1446,15 +1560,15 @@ Value BasicInterpreter::getVariable(const String& name) {
 
 void BasicInterpreter::addParameter(const Parameter& param) {
     parameters[param.name] = param;
-    // Also set the parameter as a variable so BASIC programs can access it
-    variables[param.name] = param.currentValue;
+    int slot = internName(param.name);
+    slots[slot] = param.currentValue;
 }
 
 void BasicInterpreter::setParameterValue(const String& name, const Value& value) {
     if (parameters.find(name) != parameters.end()) {
         parameters[name].setValue(value);
-        // Update the variable as well
-        variables[name] = parameters[name].currentValue;
+        int slot = internName(name);
+        slots[slot] = parameters[name].currentValue;
     }
 }
 
@@ -1474,9 +1588,11 @@ std::vector<Parameter> BasicInterpreter::getAllParameters() const {
 }
 
 void BasicInterpreter::clearParameters() {
-    // Remove parameter variables from the variable map
     for (const auto& pair : parameters) {
-        variables.erase(pair.first);
+        auto it = nameToSlot.find(pair.first);
+        if (it != nameToSlot.end()) {
+            slots[it->second] = Value(0.0f);
+        }
     }
     parameters.clear();
 }
@@ -1485,38 +1601,38 @@ void BasicInterpreter::clearParameters() {
 // BasicLEDController Implementation
 // =============================================================================
 
-BasicLEDController::BasicLEDController(CRGB* ledArray, int ledCount) 
-    : lexer(nullptr), parser(nullptr), interpreter(nullptr), ast(nullptr), programLoaded(false) {
+BasicLEDController::BasicLEDController(CRGB* ledArray, int ledCount)
+    : interpreter(nullptr), ast(nullptr), programLoaded(false) {
     interpreter = new BasicInterpreter(ledArray, ledCount);
 }
 
 BasicLEDController::~BasicLEDController() {
-    delete lexer;
-    delete parser;
     delete interpreter;
     delete ast;
 }
 
 bool BasicLEDController::loadProgram(const String& source) {
-    // Clean up previous program
-    delete lexer;
-    delete parser;
     delete ast;
-    
-    lexer = new BasicLexer(source);
-    std::vector<Token> tokens = lexer->tokenize();
-    
-    parser = new BasicParser(tokens);
-    ast = parser->parse();
-    
-    if (ast) {
-        interpreter->run(ast);
-        programLoaded = true;
-        return true;
-    }
-    
+    ast = nullptr;
     programLoaded = false;
-    return false;
+    interpreter->reset();
+
+    BasicLexer lexer(source);
+    std::vector<Token> tokens = lexer.tokenize();
+
+    BasicParser parser(tokens);
+    ast = parser.parse();
+
+    if (!ast || parser.hasError()) {
+        delete ast;
+        ast = nullptr;
+        interpreter->reset();
+        return false;
+    }
+
+    interpreter->run(ast);
+    programLoaded = true;
+    return true;
 }
 
 void BasicLEDController::runSetup() {
@@ -1593,6 +1709,25 @@ void BasicLEDController::clearParameters() {
     }
 }
 
+void BasicLEDController::setOwnsPhysicalOutput(bool owns) {
+    if (interpreter) {
+        interpreter->setOwnsPhysicalOutput(owns);
+    }
+}
+
+void BasicLEDController::setAutoShow(bool enable) {
+    if (interpreter) {
+        interpreter->setAutoShow(enable);
+    }
+}
+
+uint8_t BasicLEDController::getOutputBrightness() const {
+    if (interpreter) {
+        return interpreter->getOutputBrightness();
+    }
+    return 255;
+}
+
 // =============================================================================
 // VirtualStrip Implementation
 // =============================================================================
@@ -1604,6 +1739,7 @@ VirtualStrip::VirtualStrip(int stripIdx, int start, int len, int z, BlendMode bl
         virtualLeds[i] = CRGB::Black;
     }
     controller = new BasicLEDController(virtualLeds, length);
+    controller->setOwnsPhysicalOutput(false);
 }
 
 VirtualStrip::~VirtualStrip() {
@@ -1631,6 +1767,10 @@ void VirtualStrip::runLoop(unsigned long timeMs) {
     }
 }
 
+uint8_t VirtualStrip::getOutputBrightness() const {
+    return controller ? controller->getOutputBrightness() : 255;
+}
+
 void VirtualStrip::setRegion(int start, int len) {
     if (len != length) {
         // Need to recreate the virtual LED array
@@ -1643,8 +1783,8 @@ void VirtualStrip::setRegion(int start, int len) {
             virtualLeds[i] = CRGB::Black;
         }
         controller = new BasicLEDController(virtualLeds, length);
-        
-        // Reload the program if we had one
+        controller->setOwnsPhysicalOutput(false);
+
         if (programSource.length() > 0) {
             controller->loadProgram(programSource);
         }
@@ -1664,6 +1804,27 @@ VirtualStripManager::~VirtualStripManager() {
 
 void VirtualStripManager::addPhysicalStrip(CRGB* leds, int length) {
     physicalStrips.push_back({leds, length});
+    virtualOwned.push_back(0);
+}
+
+void VirtualStripManager::clearPhysicalStrip(int idx) {
+    if (idx < 0 || idx >= (int)physicalStrips.size()) return;
+    PhysicalStrip& phys = physicalStrips[idx];
+    for (int j = 0; j < phys.length; j++) {
+        phys.leds[j] = CRGB::Black;
+    }
+    if (idx < (int)virtualOwned.size()) {
+        virtualOwned[idx] = 0;
+    }
+}
+
+bool VirtualStripManager::hasEnabledLayerOn(int idx) const {
+    for (VirtualStrip* strip : strips) {
+        if (strip && strip->isEnabled() && strip->getStripIndex() == idx) {
+            return true;
+        }
+    }
+    return false;
 }
 
 VirtualStrip* VirtualStripManager::createStrip(int stripIndex, int start, int length, int zOrder, BlendMode blend, bool reverse) {
@@ -1683,12 +1844,18 @@ VirtualStrip* VirtualStripManager::createStrip(int stripIndex, int start, int le
 }
 
 void VirtualStripManager::removeStrip(VirtualStrip* strip) {
+    if (!strip) return;
+    int idx = strip->getStripIndex();
     for (auto it = strips.begin(); it != strips.end(); ++it) {
         if (*it == strip) {
             delete strip;
             strips.erase(it);
             break;
         }
+    }
+    if (!hasEnabledLayerOn(idx) &&
+        idx >= 0 && idx < (int)virtualOwned.size() && virtualOwned[idx]) {
+        clearPhysicalStrip(idx);
     }
 }
 
@@ -1697,6 +1864,11 @@ void VirtualStripManager::removeAllStrips() {
         delete strip;
     }
     strips.clear();
+    for (size_t i = 0; i < physicalStrips.size(); i++) {
+        if (i < virtualOwned.size() && virtualOwned[i]) {
+            clearPhysicalStrip((int)i);
+        }
+    }
 }
 
 void VirtualStripManager::runAllSetups() {
@@ -1712,19 +1884,33 @@ void VirtualStripManager::runAllLoops(unsigned long timeMs) {
 }
 
 void VirtualStripManager::renderToPhysical() {
-    // Clear all physical strips first
-    for (PhysicalStrip& phys : physicalStrips) {
-        for (int i = 0; i < phys.length; i++) {
-            phys.leds[i] = CRGB::Black;
+    if (virtualOwned.size() < physicalStrips.size()) {
+        virtualOwned.resize(physicalStrips.size(), 0);
+    }
+
+    std::vector<uint8_t> touched(physicalStrips.size(), 0);
+    for (VirtualStrip* strip : strips) {
+        if (!strip || !strip->isEnabled()) continue;
+        int idx = strip->getStripIndex();
+        if (idx >= 0 && idx < (int)physicalStrips.size()) {
+            touched[idx] = 1;
         }
     }
 
-    // Render strips in Z-order (lowest to highest)
+    for (size_t i = 0; i < physicalStrips.size(); i++) {
+        if (!touched[i] && !virtualOwned[i]) continue;
+        PhysicalStrip& phys = physicalStrips[i];
+        for (int j = 0; j < phys.length; j++) {
+            phys.leds[j] = CRGB::Black;
+        }
+    }
+
     for (VirtualStrip* strip : strips) {
         if (!strip->isEnabled()) continue;
 
         int idx = strip->getStripIndex();
-        if (idx < 0 || idx >= physicalStrips.size()) continue;
+        if (idx < 0 || idx >= (int)physicalStrips.size()) continue;
+        if (!touched[idx]) continue;
 
         PhysicalStrip& phys = physicalStrips[idx];
         int startPos = strip->getStartPos();
@@ -1732,26 +1918,31 @@ void VirtualStripManager::renderToPhysical() {
         CRGB* virtualLeds = strip->getVirtualLeds();
         BlendMode blend = strip->getBlendMode();
         bool reversed = strip->isReversed();
+        uint8_t brightness = strip->getOutputBrightness();
 
         for (int i = 0; i < length; i++) {
-            // Calculate the virtual LED index (may be reversed)
             int virtualIndex = reversed ? (length - 1 - i) : i;
-            
-            // Calculate the physical position
             int physicalPos = startPos + i;
-            
+
             if (physicalPos >= 0 && physicalPos < phys.length) {
+                CRGB src = virtualLeds[virtualIndex];
+                if (brightness != 255) {
+                    src.nscale8(brightness);
+                }
                 if (blend == BLEND_REPLACE) {
-                    // Simple replacement (highest Z wins)
-                    if (virtualLeds[virtualIndex] != CRGB::Black) {
-                        phys.leds[physicalPos] = virtualLeds[virtualIndex];
+                    // Black is transparent so lower-Z layers show through
+                    if (src != CRGB::Black) {
+                        phys.leds[physicalPos] = src;
                     }
                 } else {
-                    // Use blending function
-                    blendPixel(phys.leds[physicalPos], virtualLeds[virtualIndex], blend);
+                    blendPixel(phys.leds[physicalPos], src, blend);
                 }
             }
         }
+    }
+
+    for (size_t i = 0; i < physicalStrips.size(); i++) {
+        virtualOwned[i] = touched[i];
     }
 }
 

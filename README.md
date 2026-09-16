@@ -6,9 +6,9 @@ A **BASIC language interpreter** for programming LED animations with [FastLED](h
 
 - **BASIC Interpreter** — Write LED animation programs in a simple BASIC-like language with `setup`/`loop` structure
 - **Parameter Discovery** — Programs declare tunable parameters (`param speed number(20, 5, 100, 1)`) that are automatically discovered and adjustable at runtime
-- **Virtual Strip Manager** — Layer multiple BASIC programs on overlapping regions of a physical LED strip with Z-ordering and blend modes (replace, add, subtract, multiply, screen)
+- **Virtual Strip Manager** — Layer multiple BASIC programs on overlapping regions of a physical LED strip with Z-ordering and blend modes (replace, add, subtract, multiply, screen). Replace treats black as transparent so lower layers show through.
 - **Serial Command Handler** — Built-in serial interface for switching programs and adjusting parameters at runtime
-- **Standalone Effects** — Bonus utility effects (color wheel, double rainbow, demo reel) for quick testing
+- **Standalone Effects** — Optional extras (`#include "Effects.h"`) for color-wheel / demo-reel tests. Not pulled in by `LEDBasic.h`.
 - **Example Programs** — 10 ready-to-use BASIC programs: Rainbow, Breathing, SineWave, DoubleRainbow, Matrix, BackgroundStars, MovingComets, PulsingCenter, BikeParked, BikeRolling
 
 ## Installation
@@ -74,7 +74,7 @@ loop(time)
 end
 ```
 
-See [docs/README_BASIC.md](docs/README_BASIC.md) for the full language reference and [docs/LEDBasic_Prompt.md](docs/LEDBasic_Prompt.md) for an LLM-friendly prompt to generate programs.
+See [docs/README_BASIC.md](docs/README_BASIC.md) for the full language reference (radians, lowercase keywords, `hsv`/`setled` color values) and [docs/LEDBasic_Prompt.md](docs/LEDBasic_Prompt.md) for an LLM prompt that matches this grammar.
 
 ## Virtual Strip Layering
 
@@ -113,7 +113,7 @@ initCommandHandler({
 processSerialInput(controllers, numStrips);
 ```
 
-Commands:
+Commands (newline-terminated, no blocking read):
 - `0:3` — Load program 3 on strip 0
 - `0:p` — Display parameters for strip 0
 - `0:speed=30` — Set parameter `speed` to 30 on strip 0
@@ -123,6 +123,16 @@ Commands:
 - [FastLED](https://github.com/FastLED/FastLED) ^3.9.0
 - Arduino framework
 - ESP32 platform (ESP-IDF hardware RNG used when available, falls back to Arduino `random()`)
+
+## Tests
+
+Host tests mock Arduino/FastLED and cover parameter parsing, color values, hue wrap, `random(0)`, power precedence, program reload, and virtual-strip `show()` isolation:
+
+```
+pwsh test/native/run.ps1
+```
+
+`g++` or `clang++` is required (MSYS2 `C:\msys64\ucrt64\bin` is added automatically on Windows).
 
 ## License
 

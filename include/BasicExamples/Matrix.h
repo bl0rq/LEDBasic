@@ -13,29 +13,27 @@ setup
 end
 
 loop(time)
-  // Simple Matrix rain effect
+  fade = 1 - (speed / (tail_length * 20))
+  if fade < 0.5
+    fade = 0.5
+  end
+
   for i = 0 to numled()-1
-    // Random chance to spawn a new "drop"
     if random(spawn_rate) < density
-      // Set LED to green with random intensity
       intensity = 100 + random(155)
       setled(i, 0, intensity, 0)
     else
-      // Fade existing LEDs
       r = get_led_r(i)
       g = get_led_g(i)
       b = get_led_b(i)
-      
-      // Fade green component
-      g = g * 0.9
+      g = g * fade
       if g < 10
         g = 0
       end
-      
       setled(i, r, g, b)
     end
   next
-  
+
   show()
 end
 )";
