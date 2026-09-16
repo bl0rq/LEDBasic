@@ -611,10 +611,10 @@ ASTNode* BasicParser::parseIf() {
     
     ASTNode* ifNode = new ASTNode(NODE_IF, ifToken);
     ifNode->addChild(parseExpression()); // condition
-    ifNode->addChild(parseBlock()); // then block
-    
+    ifNode->addChild(parseBlock(true, true)); // then block may end at else
+
     if (match(TOK_ELSE)) {
-        ifNode->addChild(parseBlock()); // else block
+        ifNode->addChild(parseBlock(true, false));
     }
     
     return ifNode;
@@ -663,19 +663,24 @@ ASTNode* BasicParser::parseFor() {
     return forNode;
 }
 
-ASTNode* BasicParser::parseBlock(bool requireEnd) {
+ASTNode* BasicParser::parseBlock(bool requireEnd, bool allowElse) {
     ASTNode* block = new ASTNode(NODE_BLOCK);
 
-    while (!check(TOK_EOF) && !check(TOK_END) && !check(TOK_ELSE) && !check(TOK_NEXT)) {
+    while (!check(TOK_EOF) && !check(TOK_END) && !check(TOK_NEXT)) {
         if (check(TOK_NEWLINE)) {
             advance();
             continue;
+        }
+        if (check(TOK_ELSE)) {
+            if (allowElse) break;
+            error("Unexpected 'else'");
+            break;
         }
         block->addChild(parseStatement());
     }
 
     if (requireEnd) {
-        if (!check(TOK_ELSE)) {
+        if (!(allowElse && check(TOK_ELSE))) {
             consume(TOK_END, "Expected 'end'");
         }
     }

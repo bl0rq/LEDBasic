@@ -350,7 +350,7 @@ private:
     ASTNode* parseIf();
     ASTNode* parseWhile();
     ASTNode* parseFor();
-    ASTNode* parseBlock(bool requireEnd = true);
+    ASTNode* parseBlock(bool requireEnd = true, bool allowElse = false);
     ASTNode* parseExpression();
     ASTNode* parseLogicalOr();
     ASTNode* parseLogicalAnd();

@@ -60,6 +60,11 @@ static void testParseFail() {
     CHECK(!c.loadProgram(String("param speed typo(1)\nsetup\nend\nloop(time)\nend\n")),
           "unknown param type fails load");
     CHECK(!c.loadProgram(String("setup\n  clear()\n")), "unterminated setup fails load");
+    CHECK(!c.loadProgram(String(
+        "setup\nend\nloop(time)\n"
+        "if 1\n  while 1\n    x = 1\nelse\n  x = 2\nend\n"
+        "end\n")),
+        "while missing end cannot steal outer else");
 }
 
 static void testReload() {
