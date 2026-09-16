@@ -12,12 +12,25 @@ setup
 end
 
 loop(time)
-  if numled() < 43
+  n = numled()
+  if n < 43
     fill(255, 0, 0)
   else
     clear()
-    for i = 0 to marker_count - 1
-      setled(tail_index + i, parked_red, 0, 0)
+    count = marker_count
+    if count > n
+      count = n
+    end
+    start = tail_index
+    max_start = n - count
+    if start > max_start
+      start = max_start
+    end
+    if start < 0
+      start = 0
+    end
+    for i = 0 to count - 1
+      setled(start + i, parked_red, 0, 0)
     next
   end
 end
