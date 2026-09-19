@@ -1,7 +1,13 @@
 .pio/
-.vscode/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/extensions.json
 *.o
 *.exe
 *.log
 test/native/test_interpreter.exe
 test/native/build.log
+tools/build/
+tools/tui/build/

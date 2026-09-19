@@ -2,7 +2,7 @@
 
 This project implements a simple BASIC-like programming language specifically designed for creating LED animations on ESP32 microcontrollers using the FastLED library.
 
-Keywords are **lowercase**. `sin`/`cos`/`tan` take **radians**. Programs are loaded as strings into `BasicLEDController` or a `VirtualStrip` — this repo is a PlatformIO library, not a single firmware sketch.
+Keywords are **lowercase**. `sin`/`cos`/`tan` take **radians**. Programs are loaded as strings into `BasicLEDController` or a `VirtualStrip` — this repo is a PlatformIO library, not a single firmware sketch. A host TUI/CLI in `tools/` runs the same interpreter without a microcontroller.
 
 ## Features
 

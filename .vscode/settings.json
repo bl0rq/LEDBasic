@@ -1,0 +1,24 @@
+{
+  // F5 should not steal focus to the Debug Console — the TUI is a terminal app.
+  "debug.internalConsoleOptions": "neverOpen",
+  "debug.openDebug": "neverOpen",
+  // LED strip colors: don't let VS Code boost contrast on truecolor cells.
+  "terminal.integrated.minimumContrastRatio": 1,
+  // When the integrated terminal is focused, send TUI keys to ledbasic-tui
+  // instead of VS Code. Prefix '-' removes a command from the default skip list.
+  // Editor-focused F5 still launches this workspace's "LEDBasic TUI" config.
+  "terminal.integrated.commandsToSkipShell": [
+    "-workbench.action.showCommands",
+    "-workbench.action.debug.start",
+    "-workbench.action.debug.continue",
+    "-workbench.action.debug.stepOver",
+    "-workbench.action.debug.stepInto",
+    "-editor.action.toggleBreakpoint",
+    "-editor.action.marker.next",
+    "-editor.action.marker.nextInFiles",
+    "-editor.action.goToNextReference",
+    "-workbench.action.files.save",
+    "-workbench.action.files.openFile",
+    "-workbench.action.files.newUntitledFile"
+  ]
+}

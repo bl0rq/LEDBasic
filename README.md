@@ -134,6 +134,22 @@ pwsh test/native/run.ps1
 
 `g++` or `clang++` is required (MSYS2 `C:\msys64\ucrt64\bin` is added automatically on Windows).
 
+## Host editor and simulator
+
+Write and debug programs in the terminal without a board.
+
+**From VS Code:** `Ctrl+Shift+B` builds, `F5` builds and opens **LEDBasic TUI in a new console window** (Windows Terminal if you have it). It is a terminal app, not a GUI. If an old F5 left the status bar orange, `Shift+F5` stops that session first. Details: [tools/README.md](tools/README.md).
+
+**From a shell:** CMake + a C++17 compiler (MSYS2 `g++` on Windows):
+
+```
+pwsh -File tools/build.ps1
+tools/build/ledbasic run examples/bas/Rainbow.bas --frames 5 --dump-ascii
+tools/build/tui/ledbasic-tui
+```
+
+`ledbasic-tui` is a QBasic-inspired TUI: editor, live LED strip, F5 run, F8 step, F9 breakpoints, Immediate window.
+
 ## License
 
 MIT
