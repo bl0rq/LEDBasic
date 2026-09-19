@@ -115,6 +115,23 @@ struct Token {
         : type(t), value(v), numberValue(n), line(l), column(c) {}
 };
 
+// Structured diagnostic for the host IDE. Firmware still prints to Serial.
+struct Diagnostic {
+    enum Kind { Lex = 0, Parse = 1, Runtime = 2 };
+    Kind kind;
+    int line;
+    int column;
+    String message;
+
+    Diagnostic() : kind(Parse), line(0), column(0) {}
+    Diagnostic(Kind k, int l, int c, const String& m)
+        : kind(k), line(l), column(c), message(m) {}
+};
+
+typedef unsigned long (*LedBasicMillisFn)(void* user);
+typedef void (*LedBasicDelayFn)(int ms, void* user);
+typedef void (*LedBasicDebugHook)(int line, int column, int depth, void* user);
+
 // Value types for variables
 enum ValueType {
     VAL_NUMBER,
@@ -184,6 +201,11 @@ struct Value {
         uint8_t n = (uint8_t)constrain((int)numberValue, 0, 255);
         return CRGB(n, n, n);
     }
+};
+
+struct VariableBinding {
+    String name;
+    Value value;
 };
 
 // Parameter types for program customization
@@ -312,6 +334,10 @@ private:
     char advance();
     void skipWhitespace();
     void skipComment();
+    std::vector<Diagnostic> diagnostics;
+    bool hadError;
+
+    void addDiagnostic(const String& message, size_t errLine, size_t errColumn);
     void lexerError(const String& message, size_t errLine, size_t errColumn, const String& snippet = "");
     Token lexerError(char unexpected);
     Token readNumber();
@@ -322,6 +348,8 @@ public:
     BasicLexer(const String& src);
     Token nextToken();
     std::vector<Token> tokenize();
+    bool hasError() const { return hadError; }
+    const std::vector<Diagnostic>& getDiagnostics() const { return diagnostics; }
 };
 
 // Parser class
@@ -330,6 +358,7 @@ private:
     std::vector<Token> tokens;
     size_t current;
     bool hadError;
+    std::vector<Diagnostic> diagnostics;
 
     Token peek(int offset = 0);
     Token advance();
@@ -366,7 +395,9 @@ private:
 public:
     BasicParser(const std::vector<Token>& tokens);
     ASTNode* parse();
+    ASTNode* parseSnippet();
     bool hasError() const { return hadError; }
+    const std::vector<Diagnostic>& getDiagnostics() const { return diagnostics; }
 };
 
 // Interpreter class
@@ -383,6 +414,16 @@ private:
     uint8_t outputBrightness;
     ASTNode* setupNode;
     ASTNode* loopNode;
+    std::vector<Diagnostic> diagnostics;
+    bool abortExecution;
+    int currentLine;
+    int currentColumn;
+    int statementDepth;
+    LedBasicMillisFn millisFn;
+    LedBasicDelayFn delayFn;
+    void* clockUser;
+    LedBasicDebugHook debugHook;
+    void* debugHookUser;
 
     int internName(const String& name);
     int ensureSlot(ASTNode* node);
@@ -393,6 +434,10 @@ private:
     Value callMathFunction(TokenType func, const std::vector<Value>& args);
     Value callLedFunction(TokenType func, const std::vector<Value>& args);
     void applyLedColor(int index, const CRGB& color);
+    unsigned long hostMillis() const;
+    void hostDelay(int ms);
+    void runtimeError(ASTNode* node, const String& message);
+    void hitStatement(ASTNode* node);
 
 public:
     static const int kMaxLoopIterations = 10000;
@@ -405,6 +450,22 @@ public:
     void runLoop(unsigned long timeMs);
     void setVariable(const String& name, const Value& value);
     Value getVariable(const String& name);
+    std::vector<VariableBinding> getAllVariables() const;
+
+    void setClock(LedBasicMillisFn millisFn, LedBasicDelayFn delayFn, void* user = nullptr);
+    void setDebugHook(LedBasicDebugHook hook, void* user);
+    bool evalSnippet(const String& source, Value& result, Diagnostic& err);
+
+    const std::vector<Diagnostic>& getDiagnostics() const { return diagnostics; }
+    void clearDiagnostics() { diagnostics.clear(); abortExecution = false; }
+    bool hasRuntimeError() const { return abortExecution; }
+    void interrupt() { abortExecution = true; }
+    int getCurrentLine() const { return currentLine; }
+    int getCurrentColumn() const { return currentColumn; }
+    int getStatementDepth() const { return statementDepth; }
+    CRGB* getLeds() { return leds; }
+    const CRGB* getLeds() const { return leds; }
+    int getNumLeds() const { return numLeds; }
 
     void setOwnsPhysicalOutput(bool owns) {
         ownsPhysicalOutput = owns;
@@ -513,6 +574,7 @@ private:
     BasicInterpreter* interpreter;
     ASTNode* ast;
     bool programLoaded;
+    std::vector<Diagnostic> loadDiagnostics;
 
 public:
     BasicLEDController(CRGB* ledArray, int ledCount);
@@ -525,6 +587,21 @@ public:
     void setVariable(const String& name, const String& value);
     double getNumberVariable(const String& name);
     String getStringVariable(const String& name);
+    std::vector<VariableBinding> getAllVariables() const;
+    bool evalSnippet(const String& source, Value& result, Diagnostic& err);
+    std::vector<Diagnostic> getDiagnostics() const;
+
+    void setClock(LedBasicMillisFn millisFn, LedBasicDelayFn delayFn, void* user = nullptr);
+    void setDebugHook(LedBasicDebugHook hook, void* user);
+    bool hasRuntimeError() const;
+    void interrupt();
+    int getCurrentLine() const;
+    int getCurrentColumn() const;
+    int getStatementDepth() const;
+    CRGB* getLeds();
+    const CRGB* getLeds() const;
+    int getNumLeds() const;
+    bool isProgramLoaded() const { return programLoaded; }
 
     void setOwnsPhysicalOutput(bool owns);
     void setAutoShow(bool enable);

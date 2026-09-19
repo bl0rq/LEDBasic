@@ -62,7 +62,8 @@ static CRGB wheelToCRGB(int pos) {
 // BasicLexer Implementation
 // =============================================================================
 
-BasicLexer::BasicLexer(const String& src) : source(src), position(0), line(1), column(1) {
+BasicLexer::BasicLexer(const String& src)
+    : source(src), position(0), line(1), column(1), hadError(false) {
     initKeywords();
 }
 
@@ -160,18 +161,27 @@ void BasicLexer::skipComment() {
     }
 }
 
+void BasicLexer::addDiagnostic(const String& message, size_t errLine, size_t errColumn) {
+    hadError = true;
+    diagnostics.push_back(Diagnostic(Diagnostic::Lex, (int)errLine, (int)errColumn, message));
+    Serial.println("Lexer error at line " + String(errLine) + ", column " + String(errColumn) + ": " + message);
+}
+
 void BasicLexer::lexerError(const String& message, size_t errLine, size_t errColumn, const String& snippet) {
-    String msg = "Lexer error at line " + String(errLine) + ", column " + String(errColumn) + ": " + message;
+    String msg = message;
     if (snippet.length() > 0) {
         msg += " \"" + snippet + "\"";
     }
-    Serial.println(msg);
+    addDiagnostic(msg, errLine, errColumn);
 }
 
 Token BasicLexer::lexerError(char unexpected) {
     size_t errLine = line;
     size_t errColumn = column > 0 ? column - 1 : 0;
-    Serial.printf("Unexpected character '%c' at line %u, column %u.\n", unexpected, static_cast<unsigned int>(errLine), static_cast<unsigned int>(errColumn));
+    String msg = "Unexpected character '";
+    msg += unexpected;
+    msg += "'";
+    addDiagnostic(msg, errLine, errColumn);
     return Token(TOK_INVALID, String(unexpected), 0, errLine, errColumn);
 }
 
@@ -332,7 +342,8 @@ std::vector<Token> BasicLexer::tokenize() {
 // BasicParser Implementation
 // =============================================================================
 
-BasicParser::BasicParser(const std::vector<Token>& tokens) : tokens(tokens), current(0), hadError(false) {}
+BasicParser::BasicParser(const std::vector<Token>& tokens)
+    : tokens(tokens), current(0), hadError(false) {}
 
 Token BasicParser::peek(int offset) {
     size_t pos = current + offset;
@@ -359,7 +370,9 @@ bool BasicParser::check(TokenType type) {
 
 void BasicParser::error(const String& message) {
     hadError = true;
-    Serial.println("Parse error: " + message);
+    Token t = peek();
+    diagnostics.push_back(Diagnostic(Diagnostic::Parse, t.line, t.column, message));
+    Serial.println("Parse error at line " + String(t.line) + ", column " + String(t.column) + ": " + message);
 }
 
 Token BasicParser::consume(TokenType type, const String& message) {
@@ -544,7 +557,7 @@ ASTNode* BasicParser::parseAssignment() {
     Token identifier = consume(TOK_IDENTIFIER, "Expected identifier");
     consume(TOK_ASSIGN, "Expected '='");
     
-    ASTNode* assignment = new ASTNode(NODE_ASSIGNMENT);
+    ASTNode* assignment = new ASTNode(NODE_ASSIGNMENT, identifier);
     ASTNode* var = new ASTNode(NODE_IDENTIFIER, identifier);
     var->name = identifier.value;
     assignment->addChild(var);
@@ -561,7 +574,7 @@ ASTNode* BasicParser::parseDimStatement() {
     consume(TOK_DIM, "Expected 'dim'");
     Token identifier = consume(TOK_IDENTIFIER, "Expected identifier");
     
-    ASTNode* dimNode = new ASTNode(NODE_ARRAY_DECLARATION);
+    ASTNode* dimNode = new ASTNode(NODE_ARRAY_DECLARATION, identifier);
     ASTNode* var = new ASTNode(NODE_IDENTIFIER, identifier);
     var->name = identifier.value;
     dimNode->addChild(var);
@@ -589,7 +602,7 @@ ASTNode* BasicParser::parseArrayAssignment() {
     Token identifier = consume(TOK_IDENTIFIER, "Expected identifier");
     consume(TOK_LBRACKET, "Expected '['");
     
-    ASTNode* arrayAssign = new ASTNode(NODE_ARRAY_ASSIGNMENT);
+    ASTNode* arrayAssign = new ASTNode(NODE_ARRAY_ASSIGNMENT, identifier);
     ASTNode* var = new ASTNode(NODE_IDENTIFIER, identifier);
     var->name = identifier.value;
     arrayAssign->addChild(var);
@@ -919,13 +932,67 @@ ASTNode* BasicParser::parse() {
     return parseProgram();
 }
 
+ASTNode* BasicParser::parseSnippet() {
+    while (check(TOK_NEWLINE)) {
+        advance();
+    }
+    if (check(TOK_EOF)) {
+        error("Empty snippet");
+        return nullptr;
+    }
+
+    ASTNode* node = nullptr;
+    if (check(TOK_IDENTIFIER) && peek(1).type == TOK_ASSIGN) {
+        node = parseAssignment();
+    } else if (check(TOK_IDENTIFIER) && peek(1).type == TOK_LBRACKET) {
+        node = parseArrayAssignment();
+    } else if (check(TOK_DIM)) {
+        node = parseDimStatement();
+    } else {
+        node = parseExpression();
+        if (check(TOK_NEWLINE) || check(TOK_SEMICOLON)) {
+            advance();
+        }
+    }
+
+    while (check(TOK_NEWLINE)) {
+        advance();
+    }
+    if (!check(TOK_EOF) && !hadError) {
+        error("Unexpected input after snippet");
+    }
+    return node;
+}
+
 // =============================================================================
 // BasicInterpreter Implementation
 // =============================================================================
 
+static unsigned long ledbasicDefaultMillis(void*) { return millis(); }
+static void ledbasicDefaultDelay(int ms, void*) { delay(ms); }
+
+static bool isDebuggableStatement(NodeType t) {
+    switch (t) {
+        case NODE_ASSIGNMENT:
+        case NODE_IF:
+        case NODE_WHILE:
+        case NODE_FOR:
+        case NODE_FUNCTION_CALL:
+        case NODE_ARRAY_DECLARATION:
+        case NODE_ARRAY_ASSIGNMENT:
+        case NODE_RETURN:
+            return true;
+        default:
+            return false;
+    }
+}
+
 BasicInterpreter::BasicInterpreter(CRGB* ledArray, int ledCount)
     : leds(ledArray), numLeds(ledCount), showCalled(false), ownsPhysicalOutput(true),
-      autoShow(true), outputBrightness(255), setupNode(nullptr), loopNode(nullptr) {
+      autoShow(true), outputBrightness(255), setupNode(nullptr), loopNode(nullptr),
+      abortExecution(false), currentLine(0), currentColumn(0), statementDepth(0),
+      millisFn(ledbasicDefaultMillis), delayFn(ledbasicDefaultDelay), clockUser(nullptr),
+      debugHook(nullptr), debugHookUser(nullptr) {
     reset();
 }
 
@@ -951,6 +1018,11 @@ void BasicInterpreter::reset() {
     loopNode = nullptr;
     showCalled = false;
     outputBrightness = 255;
+    abortExecution = false;
+    currentLine = 0;
+    currentColumn = 0;
+    statementDepth = 0;
+    diagnostics.clear();
     parameters.clear();
     nameToSlot.clear();
     slots.clear();
@@ -958,6 +1030,43 @@ void BasicInterpreter::reset() {
     internName("E");
     slots[nameToSlot["PI"]] = Value((float)M_PI);
     slots[nameToSlot["E"]] = Value((float)M_E);
+}
+
+unsigned long BasicInterpreter::hostMillis() const {
+    return millisFn ? millisFn(clockUser) : millis();
+}
+
+void BasicInterpreter::hostDelay(int ms) {
+    if (delayFn) delayFn(ms, clockUser);
+    else delay(ms);
+}
+
+void BasicInterpreter::runtimeError(ASTNode* node, const String& message) {
+    int line = node ? node->token.line : currentLine;
+    int col = node ? node->token.column : currentColumn;
+    diagnostics.push_back(Diagnostic(Diagnostic::Runtime, line, col, message));
+    Serial.println("Runtime error: " + message);
+    abortExecution = true;
+}
+
+void BasicInterpreter::hitStatement(ASTNode* node) {
+    if (!node) return;
+    currentLine = node->token.line;
+    currentColumn = node->token.column;
+    if (debugHook) {
+        debugHook(currentLine, currentColumn, statementDepth, debugHookUser);
+    }
+}
+
+void BasicInterpreter::setClock(LedBasicMillisFn m, LedBasicDelayFn d, void* user) {
+    millisFn = m ? m : ledbasicDefaultMillis;
+    delayFn = d ? d : ledbasicDefaultDelay;
+    clockUser = user;
+}
+
+void BasicInterpreter::setDebugHook(LedBasicDebugHook hook, void* user) {
+    debugHook = hook;
+    debugHookUser = user;
 }
 
 void BasicInterpreter::run(ASTNode* program) {
@@ -1022,12 +1131,16 @@ void BasicInterpreter::processParameterDeclaration(ASTNode* node) {
 }
 
 void BasicInterpreter::runSetup() {
+    abortExecution = false;
+    statementDepth = 0;
     if (setupNode && setupNode->children.size() > 0) {
         execute(setupNode->children[0]); // Execute the block
     }
 }
 
 void BasicInterpreter::runLoop(unsigned long timeMs) {
+    abortExecution = false;
+    statementDepth = 0;
     if (loopNode && loopNode->children.size() >= 2) {
         if (loopNode->children[0]->type == NODE_IDENTIFIER) {
             int slot = ensureSlot(loopNode->children[0]);
@@ -1037,7 +1150,7 @@ void BasicInterpreter::runLoop(unsigned long timeMs) {
         showCalled = false;
         execute(loopNode->children[1]);
 
-        if (!showCalled && autoShow) {
+        if (!showCalled && autoShow && !abortExecution) {
             FastLED.show();
         }
     }
@@ -1161,12 +1274,23 @@ Value BasicInterpreter::evaluate(ASTNode* node) {
 }
 
 void BasicInterpreter::execute(ASTNode* node) {
-    if (!node) return;
-    
+    if (!node || abortExecution) return;
+
+    const bool debugStmt = isDebuggableStatement(node->type);
+    if (debugStmt) {
+        statementDepth++;
+        hitStatement(node);
+        if (abortExecution) {
+            statementDepth--;
+            return;
+        }
+    }
+
     switch (node->type) {
         case NODE_BLOCK:
-            for (ASTNode* child : node->children) {
-                execute(child);
+            for (size_t i = 0; i < node->children.size(); i++) {
+                execute(node->children[i]);
+                if (abortExecution) break;
             }
             break;
             
@@ -1181,6 +1305,7 @@ void BasicInterpreter::execute(ASTNode* node) {
         case NODE_IF: {
             if (node->children.size() >= 2) {
                 Value condition = evaluate(node->children[0]);
+                if (abortExecution) break;
                 if (condition.asNumber() != 0) {
                     execute(node->children[1]);
                 } else if (node->children.size() >= 3) {
@@ -1193,11 +1318,11 @@ void BasicInterpreter::execute(ASTNode* node) {
         case NODE_WHILE: {
             if (node->children.size() >= 2) {
                 int iterations = 0;
-                while (true) {
+                while (!abortExecution) {
                     Value condition = evaluate(node->children[0]);
-                    if (condition.asNumber() == 0) break;
+                    if (abortExecution || condition.asNumber() == 0) break;
                     if (++iterations > kMaxLoopIterations) {
-                        Serial.println("Runtime error: while loop exceeded iteration limit");
+                        runtimeError(node, "while loop exceeded iteration limit");
                         break;
                     }
                     execute(node->children[1]);
@@ -1216,22 +1341,23 @@ void BasicInterpreter::execute(ASTNode* node) {
                 float endN = end.asNumber();
 
                 if (stepN == 0) {
-                    Serial.println("Runtime error: for step cannot be 0");
+                    runtimeError(node, "for step cannot be 0");
                     break;
                 }
 
                 slots[slot] = start;
                 int iterations = 0;
-                while (true) {
+                while (!abortExecution) {
                     float current = slots[slot].asNumber();
                     if ((stepN > 0 && current > endN) || (stepN < 0 && current < endN)) {
                         break;
                     }
                     if (++iterations > kMaxLoopIterations) {
-                        Serial.println("Runtime error: for loop exceeded iteration limit");
+                        runtimeError(node, "for loop exceeded iteration limit");
                         break;
                     }
                     execute(node->children[4]);
+                    if (abortExecution) break;
                     slots[slot] = Value(current + stepN);
                 }
             }
@@ -1244,7 +1370,9 @@ void BasicInterpreter::execute(ASTNode* node) {
             for (size_t i = 0; i < node->children.size(); i++) {
                 args.push_back(evaluate(node->children[i]));
             }
-            callFunction(node->token.type, args);
+            if (!abortExecution) {
+                callFunction(node->token.type, args);
+            }
             break;
         }
 
@@ -1279,6 +1407,10 @@ void BasicInterpreter::execute(ASTNode* node) {
         default:
             evaluate(node); // For expression statements
             break;
+    }
+
+    if (debugStmt) {
+        statementDepth--;
     }
 }
 
@@ -1374,11 +1506,11 @@ Value BasicInterpreter::callMathFunction(TokenType func, const std::vector<Value
             }
             break;
         case TOK_MILLIS:
-            return Value((float)millis());
+            return Value((float)hostMillis());
         case TOK_DELAY:
             if (args.size() >= 1) {
                 int delayMs = (int)args[0].asNumber();
-                if (delayMs > 0) delay(delayMs);
+                if (delayMs > 0) hostDelay(delayMs);
             }
             break;
         case TOK_HSV_TO_RGB: {
@@ -1554,6 +1686,71 @@ Value BasicInterpreter::getVariable(const String& name) {
     return Value(0);
 }
 
+std::vector<VariableBinding> BasicInterpreter::getAllVariables() const {
+    std::vector<VariableBinding> out;
+    out.reserve(nameToSlot.size());
+    for (const auto& pair : nameToSlot) {
+        VariableBinding b;
+        b.name = pair.first;
+        b.value = slots[pair.second];
+        out.push_back(b);
+    }
+    return out;
+}
+
+bool BasicInterpreter::evalSnippet(const String& source, Value& result, Diagnostic& err) {
+    err = Diagnostic();
+    result = Value(0);
+
+    LedBasicDebugHook savedHook = debugHook;
+    void* savedUser = debugHookUser;
+    debugHook = nullptr;
+    debugHookUser = nullptr;
+    abortExecution = false;
+
+    BasicLexer lexer(source);
+    std::vector<Token> tokens = lexer.tokenize();
+    if (lexer.hasError()) {
+        const std::vector<Diagnostic>& diags = lexer.getDiagnostics();
+        err = diags.empty() ? Diagnostic(Diagnostic::Lex, 1, 1, "Lexer error") : diags[0];
+        debugHook = savedHook;
+        debugHookUser = savedUser;
+        return false;
+    }
+
+    BasicParser parser(tokens);
+    ASTNode* node = parser.parseSnippet();
+    if (!node || parser.hasError()) {
+        const std::vector<Diagnostic>& diags = parser.getDiagnostics();
+        err = diags.empty() ? Diagnostic(Diagnostic::Parse, 1, 1, "Parse error") : diags[0];
+        delete node;
+        debugHook = savedHook;
+        debugHookUser = savedUser;
+        return false;
+    }
+
+    if (node->type == NODE_ASSIGNMENT || node->type == NODE_ARRAY_ASSIGNMENT ||
+        node->type == NODE_ARRAY_DECLARATION) {
+        execute(node);
+        if (node->type == NODE_ASSIGNMENT && node->children.size() >= 1) {
+            result = getVariable(node->children[0]->name);
+        } else {
+            result = Value(0);
+        }
+    } else {
+        result = evaluate(node);
+    }
+
+    bool ok = !abortExecution;
+    if (!ok && !diagnostics.empty()) {
+        err = diagnostics.back();
+    }
+    delete node;
+    debugHook = savedHook;
+    debugHookUser = savedUser;
+    return ok;
+}
+
 // =============================================================================
 // Parameter Management Implementation
 // =============================================================================
@@ -1615,15 +1812,22 @@ bool BasicLEDController::loadProgram(const String& source) {
     delete ast;
     ast = nullptr;
     programLoaded = false;
+    loadDiagnostics.clear();
     interpreter->reset();
 
     BasicLexer lexer(source);
     std::vector<Token> tokens = lexer.tokenize();
+    for (size_t i = 0; i < lexer.getDiagnostics().size(); i++) {
+        loadDiagnostics.push_back(lexer.getDiagnostics()[i]);
+    }
 
     BasicParser parser(tokens);
     ast = parser.parse();
+    for (size_t i = 0; i < parser.getDiagnostics().size(); i++) {
+        loadDiagnostics.push_back(parser.getDiagnostics()[i]);
+    }
 
-    if (!ast || parser.hasError()) {
+    if (lexer.hasError() || !ast || parser.hasError()) {
         delete ast;
         ast = nullptr;
         interpreter->reset();
@@ -1671,6 +1875,78 @@ String BasicLEDController::getStringVariable(const String& name) {
         return interpreter->getVariable(name).stringValue;
     }
     return "";
+}
+
+std::vector<VariableBinding> BasicLEDController::getAllVariables() const {
+    if (interpreter) {
+        return interpreter->getAllVariables();
+    }
+    return std::vector<VariableBinding>();
+}
+
+bool BasicLEDController::evalSnippet(const String& source, Value& result, Diagnostic& err) {
+    if (interpreter) {
+        return interpreter->evalSnippet(source, result, err);
+    }
+    err = Diagnostic(Diagnostic::Runtime, 0, 0, "No interpreter");
+    return false;
+}
+
+std::vector<Diagnostic> BasicLEDController::getDiagnostics() const {
+    std::vector<Diagnostic> out = loadDiagnostics;
+    if (interpreter) {
+        const std::vector<Diagnostic>& runtime = interpreter->getDiagnostics();
+        for (size_t i = 0; i < runtime.size(); i++) {
+            out.push_back(runtime[i]);
+        }
+    }
+    return out;
+}
+
+void BasicLEDController::setClock(LedBasicMillisFn millisFn, LedBasicDelayFn delayFn, void* user) {
+    if (interpreter) {
+        interpreter->setClock(millisFn, delayFn, user);
+    }
+}
+
+void BasicLEDController::setDebugHook(LedBasicDebugHook hook, void* user) {
+    if (interpreter) {
+        interpreter->setDebugHook(hook, user);
+    }
+}
+
+bool BasicLEDController::hasRuntimeError() const {
+    return interpreter && interpreter->hasRuntimeError();
+}
+
+void BasicLEDController::interrupt() {
+    if (interpreter) {
+        interpreter->interrupt();
+    }
+}
+
+int BasicLEDController::getCurrentLine() const {
+    return interpreter ? interpreter->getCurrentLine() : 0;
+}
+
+int BasicLEDController::getCurrentColumn() const {
+    return interpreter ? interpreter->getCurrentColumn() : 0;
+}
+
+int BasicLEDController::getStatementDepth() const {
+    return interpreter ? interpreter->getStatementDepth() : 0;
+}
+
+CRGB* BasicLEDController::getLeds() {
+    return interpreter ? interpreter->getLeds() : nullptr;
+}
+
+const CRGB* BasicLEDController::getLeds() const {
+    return interpreter ? interpreter->getLeds() : nullptr;
+}
+
+int BasicLEDController::getNumLeds() const {
+    return interpreter ? interpreter->getNumLeds() : 0;
 }
 
 // =============================================================================

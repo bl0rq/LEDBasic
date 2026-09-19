@@ -57,8 +57,20 @@ static void testParseFail() {
     CRGB leds[4];
     BasicLEDController c(leds, 4);
     CHECK(!c.loadProgram(String("setup\n  ???\nend\n")), "invalid tokens fail load");
+    {
+        auto diags = c.getDiagnostics();
+        CHECK(!diags.empty(), "invalid tokens produce diagnostics");
+        CHECK(!diags.empty() && diags[0].line == 2, "unexpected char is on line 2");
+        CHECK(!diags.empty() && diags[0].kind == Diagnostic::Lex, "unexpected char is a lex error");
+    }
     CHECK(!c.loadProgram(String("param speed typo(1)\nsetup\nend\nloop(time)\nend\n")),
           "unknown param type fails load");
+    {
+        auto diags = c.getDiagnostics();
+        CHECK(!diags.empty(), "unknown param type produces diagnostics");
+        CHECK(!diags.empty() && diags[0].line >= 1, "param type error has a line");
+        CHECK(!diags.empty() && diags[0].kind == Diagnostic::Parse, "param type error is parse");
+    }
     CHECK(!c.loadProgram(String("setup\n  clear()\n")), "unterminated setup fails load");
     CHECK(!c.loadProgram(String(
         "setup\nend\nloop(time)\n"
@@ -246,6 +258,117 @@ static void testPhysicalShow() {
     CHECK(FastLED.showCount >= 1, "physical show() calls FastLED.show");
 }
 
+static unsigned long gTestClock = 0;
+static unsigned long testMillisFn(void*) { return gTestClock; }
+static void testDelayFn(int ms, void*) { gTestClock += (unsigned long)ms; }
+
+static void testInjectedClock() {
+    CRGB leds[2];
+    BasicLEDController c(leds, 2);
+    gTestClock = 0;
+    c.setClock(testMillisFn, testDelayFn);
+    const char* src = R"(
+setup
+  delay(50)
+  t = millis()
+end
+loop(time)
+end
+)";
+    CHECK(c.loadProgram(String(src)), "clock program loads");
+    c.runSetup();
+    CHECK(c.getNumberVariable("t") == 50.0, "delay(50) advanced injected millis to 50");
+}
+
+struct LineRec {
+    int lines[64];
+    int depths[64];
+    int n;
+};
+
+static void recHook(int line, int column, int depth, void* user) {
+    (void)column;
+    LineRec* r = (LineRec*)user;
+    if (r->n < 64) {
+        r->lines[r->n] = line;
+        r->depths[r->n] = depth;
+        r->n++;
+    }
+}
+
+static void testDebugHook() {
+    CRGB leds[2];
+    BasicLEDController c(leds, 2);
+    const char* src =
+        "setup\n"
+        "  x = 1\n"
+        "  y = 2\n"
+        "end\n"
+        "loop(time)\n"
+        "  x = x + 1\n"
+        "  show()\n"
+        "end\n";
+    CHECK(c.loadProgram(String(src)), "debug program loads");
+    LineRec r;
+    r.n = 0;
+    c.setDebugHook(recHook, &r);
+    c.runSetup();
+    CHECK(r.n == 2, "setup hits two assignment statements");
+    CHECK(r.n >= 1 && r.lines[0] == 2, "first setup statement is line 2");
+    CHECK(r.n >= 2 && r.lines[1] == 3, "second setup statement is line 3");
+    CHECK(r.n >= 1 && r.depths[0] == 1, "top-level statement depth is 1");
+    int afterSetup = r.n;
+    c.runLoop(0);
+    CHECK(r.n == afterSetup + 2, "loop hits assignment and show()");
+    CHECK(r.n >= afterSetup + 1 && r.lines[afterSetup] == 6, "loop assignment is line 6");
+    c.setDebugHook(nullptr, nullptr);
+}
+
+static void testSnippetEval() {
+    CRGB leds[2];
+    BasicLEDController c(leds, 2);
+    CHECK(c.loadProgram(String("setup\n  x = 4\nend\nloop(time)\nend\n")), "snippet program loads");
+    c.runSetup();
+    Value result;
+    Diagnostic err;
+    CHECK(c.evalSnippet(String("1+2"), result, err), "snippet 1+2 succeeds");
+    CHECK(result.asNumber() == 3.0f, "1+2 == 3");
+    CHECK(c.evalSnippet(String("x = 9"), result, err), "snippet assignment succeeds");
+    CHECK(c.getNumberVariable("x") == 9.0, "x is 9 after snippet");
+    CHECK(result.asNumber() == 9.0f, "assignment snippet returns new value");
+    CHECK(!c.evalSnippet(String("???"), result, err), "bad snippet fails");
+    CHECK(err.kind == Diagnostic::Lex || err.kind == Diagnostic::Parse, "bad snippet has diagnostic kind");
+
+    auto vars = c.getAllVariables();
+    bool sawX = false;
+    for (size_t i = 0; i < vars.size(); i++) {
+        if (vars[i].name == "x") sawX = true;
+    }
+    CHECK(sawX, "getAllVariables includes x");
+}
+
+static void testRuntimeDiagnostic() {
+    CRGB leds[2];
+    BasicLEDController c(leds, 2);
+    const char* src =
+        "setup\n"
+        "  for i = 0 to 10 step 0\n"
+        "    x = 1\n"
+        "  next\n"
+        "end\n"
+        "loop(time)\n"
+        "end\n";
+    CHECK(c.loadProgram(String(src)), "zero-step program loads");
+    c.runSetup();
+    CHECK(c.hasRuntimeError(), "zero step is a runtime error");
+    auto diags = c.getDiagnostics();
+    bool saw = false;
+    for (size_t i = 0; i < diags.size(); i++) {
+        if (diags[i].kind == Diagnostic::Runtime && diags[i].line == 2) saw = true;
+    }
+    CHECK(saw, "runtime diagnostic is on the for line");
+}
+
 int main() {
     testParams();
     testParseFail();
@@ -259,6 +382,10 @@ int main() {
     testVirtualClearOnRemove();
     testExamplesLoad();
     testPhysicalShow();
+    testInjectedClock();
+    testDebugHook();
+    testSnippetEval();
+    testRuntimeDiagnostic();
 
     std::printf("%d passed, %d failed\n", gPass, gFails);
     return gFails ? 1 : 0;
