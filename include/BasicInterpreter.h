@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <FastLED.h>
+#include <atomic>
 #include <map>
 #include <vector>
 #include <stdint.h>
@@ -415,7 +416,7 @@ private:
     ASTNode* setupNode;
     ASTNode* loopNode;
     std::vector<Diagnostic> diagnostics;
-    bool abortExecution;
+    std::atomic<bool> abortExecution;
     int currentLine;
     int currentColumn;
     int statementDepth;
@@ -438,6 +439,9 @@ private:
     void hostDelay(int ms);
     void runtimeError(ASTNode* node, const String& message);
     void hitStatement(ASTNode* node);
+    bool aborted() const {
+        return abortExecution.load(std::memory_order_acquire);
+    }
 
 public:
     static const int kMaxLoopIterations = 10000;
@@ -457,9 +461,14 @@ public:
     bool evalSnippet(const String& source, Value& result, Diagnostic& err);
 
     const std::vector<Diagnostic>& getDiagnostics() const { return diagnostics; }
-    void clearDiagnostics() { diagnostics.clear(); abortExecution = false; }
-    bool hasRuntimeError() const { return abortExecution; }
-    void interrupt() { abortExecution = true; }
+    void clearDiagnostics() {
+        diagnostics.clear();
+        abortExecution.store(false, std::memory_order_relaxed);
+    }
+    bool hasRuntimeError() const {
+        return abortExecution.load(std::memory_order_acquire);
+    }
+    void interrupt() { abortExecution.store(true, std::memory_order_release); }
     int getCurrentLine() const { return currentLine; }
     int getCurrentColumn() const { return currentColumn; }
     int getStatementDepth() const { return statementDepth; }

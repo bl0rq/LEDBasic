@@ -135,55 +135,72 @@ void HostSession::startWorker() {
     worker_ = std::thread([this] { workerMain(); });
 }
 
-void HostSession::publishSnapshotLocked() {
-    lastSnap_ = buildSnapshotLocked();
+void HostSession::captureController(Snapshot& s, std::vector<Diagnostic>& diags) const {
+    s.programLoaded = false;
+    s.brightness = 255;
+    s.currentLine = 0;
+    s.currentColumn = 0;
+    s.statementDepth = 0;
+    s.runtimeError = false;
+    s.leds.clear();
+    s.variables.clear();
+    s.parameters.clear();
+    diags.clear();
+    if (!controller_) return;
+
+    s.programLoaded = controller_->isProgramLoaded();
+    s.brightness = controller_->getOutputBrightness();
+    s.currentLine = controller_->getCurrentLine();
+    s.currentColumn = controller_->getCurrentColumn();
+    s.statementDepth = controller_->getStatementDepth();
+    s.runtimeError = controller_->hasRuntimeError();
+    const int n = controller_->getNumLeds();
+    const CRGB* leds = controller_->getLeds();
+    s.leds.resize((size_t)n);
+    for (int i = 0; i < n; i++) {
+        s.leds[(size_t)i] = LedPixel{leds[i].r, leds[i].g, leds[i].b};
+    }
+    auto vars = controller_->getAllVariables();
+    s.variables.reserve(vars.size());
+    for (size_t i = 0; i < vars.size(); i++) {
+        WatchVar w;
+        w.name = toStd(vars[i].name);
+        w.display = formatValue(vars[i].value);
+        w.number = vars[i].value.asNumber();
+        s.variables.push_back(w);
+    }
+    auto params = controller_->getAllParameters();
+    s.parameters.reserve(params.size());
+    for (size_t i = 0; i < params.size(); i++) {
+        HostParameter p;
+        p.name = toStd(params[i].name);
+        p.type = params[i].type;
+        p.value = params[i].currentValue.asNumber();
+        p.minValue = params[i].minValue;
+        p.maxValue = params[i].maxValue;
+        p.stepValue = params[i].stepValue;
+        for (size_t e = 0; e < params[i].enumValues.size(); e++) {
+            p.enumValues.push_back(toStd(params[i].enumValues[e]));
+        }
+        s.parameters.push_back(p);
+    }
+    diags = controller_->getDiagnostics();
 }
 
-Snapshot HostSession::buildSnapshotLocked() const {
+void HostSession::publishSnapshotLocked() {
     Snapshot s;
-    s.state = state_;
-    s.timeMs = simTime_;
-    s.sourcePath = sourcePath_;
-    s.breakpoints = breakpoints_;
-    s.programLoaded = controller_ && controller_->isProgramLoaded();
-    if (controller_) {
-        s.brightness = controller_->getOutputBrightness();
-        s.currentLine = controller_->getCurrentLine();
-        s.currentColumn = controller_->getCurrentColumn();
-        s.statementDepth = controller_->getStatementDepth();
-        s.runtimeError = controller_->hasRuntimeError();
-        const int n = controller_->getNumLeds();
-        const CRGB* leds = controller_->getLeds();
-        s.leds.resize((size_t)n);
-        for (int i = 0; i < n; i++) {
-            s.leds[(size_t)i] = LedPixel{leds[i].r, leds[i].g, leds[i].b};
-        }
-        auto vars = controller_->getAllVariables();
-        s.variables.reserve(vars.size());
-        for (size_t i = 0; i < vars.size(); i++) {
-            WatchVar w;
-            w.name = toStd(vars[i].name);
-            w.display = formatValue(vars[i].value);
-            w.number = vars[i].value.asNumber();
-            s.variables.push_back(w);
-        }
-        auto params = controller_->getAllParameters();
-        s.parameters.reserve(params.size());
-        for (size_t i = 0; i < params.size(); i++) {
-            HostParameter p;
-            p.name = toStd(params[i].name);
-            p.type = params[i].type;
-            p.value = params[i].currentValue.asNumber();
-            p.minValue = params[i].minValue;
-            p.maxValue = params[i].maxValue;
-            p.stepValue = params[i].stepValue;
-            for (size_t e = 0; e < params[i].enumValues.size(); e++) {
-                p.enumValues.push_back(toStd(params[i].enumValues[e]));
-            }
-            s.parameters.push_back(p);
-        }
-    }
-    return s;
+    std::vector<Diagnostic> diags;
+    captureController(s, diags);
+    installCapture(std::move(s), std::move(diags));
+}
+
+void HostSession::installCapture(Snapshot frozen, std::vector<Diagnostic> diags) {
+    frozen.state = state_;
+    frozen.timeMs = simTime_;
+    frozen.sourcePath = sourcePath_;
+    frozen.breakpoints = breakpoints_;
+    lastSnap_ = std::move(frozen);
+    lastDiags_ = std::move(diags);
 }
 
 void HostSession::applyPendingParamsLocked() {
@@ -269,12 +286,17 @@ void HostSession::workerMain() {
         if (needSetup_) {
             simTime_ = 0;
             applyPendingParamsLocked();
-            state_ = stepping ? Snapshot::Playing : Snapshot::Playing;
+            state_ = Snapshot::Playing;
             lock.unlock();
             controller_->runSetup();
-            lock.lock();
+            {
+                Snapshot frozen;
+                std::vector<Diagnostic> diags;
+                captureController(frozen, diags);
+                lock.lock();
+                installCapture(std::move(frozen), std::move(diags));
+            }
             needSetup_ = false;
-            publishSnapshotLocked();
             if (controller_->hasRuntimeError()) {
                 state_ = Snapshot::Paused;
                 stepMode_ = StepNone;
@@ -306,10 +328,14 @@ void HostSession::workerMain() {
             const float speed = speedMul_ < 0.01f ? 0.01f : speedMul_;
             lock.unlock();
             controller_->runLoop(t);
-            lock.lock();
-
-            simTime_ = t + dt;
-            publishSnapshotLocked();
+            {
+                Snapshot frozen;
+                std::vector<Diagnostic> diags;
+                captureController(frozen, diags);
+                lock.lock();
+                simTime_ = t + dt;
+                installCapture(std::move(frozen), std::move(diags));
+            }
 
             if (controller_->hasRuntimeError()) {
                 state_ = Snapshot::Paused;
@@ -395,8 +421,7 @@ bool HostSession::loadFile(const std::string& path) {
 
 std::vector<Diagnostic> HostSession::diagnostics() const {
     std::lock_guard<std::mutex> lock(mu_);
-    if (!controller_) return {};
-    return controller_->getDiagnostics();
+    return lastDiags_;
 }
 
 bool HostSession::setLedCount(int n) {
@@ -581,10 +606,15 @@ bool HostSession::runFrames(int n, std::vector<std::vector<LedPixel>>* dumps) {
     applyPendingParamsLocked();
     lock.unlock();
     controller_->runSetup();
-    lock.lock();
+    {
+        Snapshot frozen;
+        std::vector<Diagnostic> diags;
+        captureController(frozen, diags);
+        lock.lock();
+        installCapture(std::move(frozen), std::move(diags));
+    }
     if (controller_->hasRuntimeError()) {
         controller_->setDebugHook(debugHook, this);
-        publishSnapshotLocked();
         return false;
     }
     if (dumps) {
@@ -595,19 +625,17 @@ bool HostSession::runFrames(int n, std::vector<std::vector<LedPixel>>* dumps) {
         const unsigned long t = simTime_;
         lock.unlock();
         controller_->runLoop(t);
-        lock.lock();
-        simTime_ += frameDtMs_;
-        if (dumps) {
-            std::vector<LedPixel> frame;
-            frame.resize(leds_.size());
-            for (size_t p = 0; p < leds_.size(); p++) {
-                frame[p] = LedPixel{leds_[p].r, leds_[p].g, leds_[p].b};
-            }
-            dumps->push_back(frame);
+        {
+            Snapshot frozen;
+            std::vector<Diagnostic> diags;
+            captureController(frozen, diags);
+            lock.lock();
+            simTime_ += frameDtMs_;
+            if (dumps) dumps->push_back(frozen.leds);
+            installCapture(std::move(frozen), std::move(diags));
         }
         if (controller_->hasRuntimeError()) {
             controller_->setDebugHook(debugHook, this);
-            publishSnapshotLocked();
             return false;
         }
     }

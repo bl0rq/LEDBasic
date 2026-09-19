@@ -112,7 +112,8 @@ private:
     void resetSimulationLocked();
     bool ensureLoadedLocked();
     void requestStopAndWait();
-    Snapshot buildSnapshotLocked() const;
+    void captureController(Snapshot& s, std::vector<Diagnostic>& diags) const;
+    void installCapture(Snapshot frozen, std::vector<Diagnostic> diags);
 
     static unsigned long clockMillis(void* user);
     static void clockDelay(int ms, void* user);
@@ -145,6 +146,7 @@ private:
     std::set<int> breakpoints_;
     std::vector<std::pair<std::string, float>> pendingParams_;
     Snapshot lastSnap_;
+    std::vector<Diagnostic> lastDiags_;
 };
 
 } // namespace ledbasic

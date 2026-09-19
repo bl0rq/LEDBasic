@@ -369,6 +369,37 @@ static void testRuntimeDiagnostic() {
     CHECK(saw, "runtime diagnostic is on the for line");
 }
 
+static void testInterruptStopsLoop() {
+    CRGB leds[2];
+    BasicLEDController c(leds, 2);
+    const char* src =
+        "setup\nend\n"
+        "loop(time)\n"
+        "  x = 0\n"
+        "  while 1\n"
+        "    x = x + 1\n"
+        "  end\n"
+        "end\n";
+    CHECK(c.loadProgram(String(src)), "interrupt program loads");
+    struct Ir {
+        BasicLEDController* ctl;
+        int hits;
+    };
+    Ir ir;
+    ir.ctl = &c;
+    ir.hits = 0;
+    auto hook = [](int, int, int, void* user) {
+        Ir* p = (Ir*)user;
+        p->hits++;
+        if (p->hits >= 8) p->ctl->interrupt();
+    };
+    c.setDebugHook(hook, &ir);
+    c.runLoop(0);
+    CHECK(ir.hits >= 8, "hook ran until interrupt");
+    CHECK(c.getNumberVariable("x") < 10000.0, "interrupt beat the iteration cap");
+    c.setDebugHook(nullptr, nullptr);
+}
+
 int main() {
     testParams();
     testParseFail();
@@ -386,6 +417,7 @@ int main() {
     testDebugHook();
     testSnippetEval();
     testRuntimeDiagnostic();
+    testInterruptStopsLoop();
 
     std::printf("%d passed, %d failed\n", gPass, gFails);
     return gFails ? 1 : 0;

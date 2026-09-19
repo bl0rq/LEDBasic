@@ -1018,7 +1018,7 @@ void BasicInterpreter::reset() {
     loopNode = nullptr;
     showCalled = false;
     outputBrightness = 255;
-    abortExecution = false;
+    abortExecution.store(false, std::memory_order_relaxed);
     currentLine = 0;
     currentColumn = 0;
     statementDepth = 0;
@@ -1046,7 +1046,7 @@ void BasicInterpreter::runtimeError(ASTNode* node, const String& message) {
     int col = node ? node->token.column : currentColumn;
     diagnostics.push_back(Diagnostic(Diagnostic::Runtime, line, col, message));
     Serial.println("Runtime error: " + message);
-    abortExecution = true;
+    abortExecution.store(true, std::memory_order_release);
 }
 
 void BasicInterpreter::hitStatement(ASTNode* node) {
@@ -1131,7 +1131,7 @@ void BasicInterpreter::processParameterDeclaration(ASTNode* node) {
 }
 
 void BasicInterpreter::runSetup() {
-    abortExecution = false;
+    abortExecution.store(false, std::memory_order_relaxed);
     statementDepth = 0;
     if (setupNode && setupNode->children.size() > 0) {
         execute(setupNode->children[0]); // Execute the block
@@ -1139,7 +1139,7 @@ void BasicInterpreter::runSetup() {
 }
 
 void BasicInterpreter::runLoop(unsigned long timeMs) {
-    abortExecution = false;
+    abortExecution.store(false, std::memory_order_relaxed);
     statementDepth = 0;
     if (loopNode && loopNode->children.size() >= 2) {
         if (loopNode->children[0]->type == NODE_IDENTIFIER) {
@@ -1150,7 +1150,7 @@ void BasicInterpreter::runLoop(unsigned long timeMs) {
         showCalled = false;
         execute(loopNode->children[1]);
 
-        if (!showCalled && autoShow && !abortExecution) {
+        if (!showCalled && autoShow && !abortExecution.load(std::memory_order_acquire)) {
             FastLED.show();
         }
     }
@@ -1274,13 +1274,13 @@ Value BasicInterpreter::evaluate(ASTNode* node) {
 }
 
 void BasicInterpreter::execute(ASTNode* node) {
-    if (!node || abortExecution) return;
+    if (!node || aborted()) return;
 
     const bool debugStmt = isDebuggableStatement(node->type);
     if (debugStmt) {
         statementDepth++;
         hitStatement(node);
-        if (abortExecution) {
+        if (aborted()) {
             statementDepth--;
             return;
         }
@@ -1290,7 +1290,7 @@ void BasicInterpreter::execute(ASTNode* node) {
         case NODE_BLOCK:
             for (size_t i = 0; i < node->children.size(); i++) {
                 execute(node->children[i]);
-                if (abortExecution) break;
+                if (aborted()) break;
             }
             break;
             
@@ -1305,7 +1305,7 @@ void BasicInterpreter::execute(ASTNode* node) {
         case NODE_IF: {
             if (node->children.size() >= 2) {
                 Value condition = evaluate(node->children[0]);
-                if (abortExecution) break;
+                if (aborted()) break;
                 if (condition.asNumber() != 0) {
                     execute(node->children[1]);
                 } else if (node->children.size() >= 3) {
@@ -1318,9 +1318,9 @@ void BasicInterpreter::execute(ASTNode* node) {
         case NODE_WHILE: {
             if (node->children.size() >= 2) {
                 int iterations = 0;
-                while (!abortExecution) {
+                while (!aborted()) {
                     Value condition = evaluate(node->children[0]);
-                    if (abortExecution || condition.asNumber() == 0) break;
+                    if (aborted() || condition.asNumber() == 0) break;
                     if (++iterations > kMaxLoopIterations) {
                         runtimeError(node, "while loop exceeded iteration limit");
                         break;
@@ -1347,7 +1347,7 @@ void BasicInterpreter::execute(ASTNode* node) {
 
                 slots[slot] = start;
                 int iterations = 0;
-                while (!abortExecution) {
+                while (!aborted()) {
                     float current = slots[slot].asNumber();
                     if ((stepN > 0 && current > endN) || (stepN < 0 && current < endN)) {
                         break;
@@ -1357,7 +1357,7 @@ void BasicInterpreter::execute(ASTNode* node) {
                         break;
                     }
                     execute(node->children[4]);
-                    if (abortExecution) break;
+                    if (aborted()) break;
                     slots[slot] = Value(current + stepN);
                 }
             }
@@ -1370,7 +1370,7 @@ void BasicInterpreter::execute(ASTNode* node) {
             for (size_t i = 0; i < node->children.size(); i++) {
                 args.push_back(evaluate(node->children[i]));
             }
-            if (!abortExecution) {
+            if (!aborted()) {
                 callFunction(node->token.type, args);
             }
             break;
@@ -1706,7 +1706,7 @@ bool BasicInterpreter::evalSnippet(const String& source, Value& result, Diagnost
     void* savedUser = debugHookUser;
     debugHook = nullptr;
     debugHookUser = nullptr;
-    abortExecution = false;
+    abortExecution.store(false, std::memory_order_relaxed);
 
     BasicLexer lexer(source);
     std::vector<Token> tokens = lexer.tokenize();
@@ -1741,7 +1741,7 @@ bool BasicInterpreter::evalSnippet(const String& source, Value& result, Diagnost
         result = evaluate(node);
     }
 
-    bool ok = !abortExecution;
+    bool ok = !abortExecution.load(std::memory_order_acquire);
     if (!ok && !diagnostics.empty()) {
         err = diagnostics.back();
     }
