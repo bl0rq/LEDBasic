@@ -167,7 +167,6 @@ int main(int argc, char** argv) {
 
     auto reloadFromEditor = [&]() -> bool {
         bool ok = session.loadSource(editor->getText(), filePath);
-        editor->clearDirty();
         session.clearBreakpoints();
         for (int line : editor->breakpoints()) session.setBreakpoint(line, true);
         if (!ok) {
