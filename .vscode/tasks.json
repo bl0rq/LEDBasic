@@ -1,0 +1,109 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build host tools",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/tools/build.ps1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "silent",
+        "revealProblems": "onProblem",
+        "panel": "shared",
+        "focus": false,
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run LEDBasic TUI",
+      "dependsOn": "Build host tools",
+      "dependsOrder": "sequence",
+      "type": "shell",
+      "command": "${workspaceFolder}/tools/build/tui/ledbasic-tui.exe",
+      "linux": {
+        "command": "${workspaceFolder}/tools/build/tui/ledbasic-tui"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/tools/build/tui/ledbasic-tui"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "echo": false,
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "showReuseMessage": false,
+        "clear": true
+      },
+      "problemMatcher": [],
+      "runOptions": {
+        "instanceLimit": 1
+      }
+    },
+    {
+      "label": "Run LEDBasic TUI (open file)",
+      "dependsOn": "Build host tools",
+      "dependsOrder": "sequence",
+      "type": "shell",
+      "command": "${workspaceFolder}/tools/build/tui/ledbasic-tui.exe",
+      "args": ["${file}"],
+      "linux": {
+        "command": "${workspaceFolder}/tools/build/tui/ledbasic-tui"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/tools/build/tui/ledbasic-tui"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "echo": false,
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "showReuseMessage": false,
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run LEDBasic TUI in Windows Terminal",
+      "dependsOn": "Build host tools",
+      "dependsOrder": "sequence",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/tools/run-tui.ps1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "echo": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
