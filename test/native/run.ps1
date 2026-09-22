@@ -24,5 +24,31 @@ Write-Host "Compiling with $cxx"
     -o $out
 
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host "Compiling LEDBASIC_NO_FASTLED object"
+$obj = Join-Path $native "BasicInterpreter_nofastled.o"
+& $cxx -std=c++17 -c -O0 -g -DLEDBASIC_NO_FASTLED `
+    "-I$native" `
+    "-I$(Join-Path $root 'include')" `
+    $src `
+    -o $obj
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Remove-Item $obj -ErrorAction SilentlyContinue
+
+Write-Host "Compiling WLED runtime (native)"
+$runtimeOut = Join-Path $native "test_wled_runtime.exe"
+$wled = Join-Path $root "wled"
+& $cxx -std=c++17 -O0 -g -DLEDBASIC_NO_FASTLED `
+    "-I$native" `
+    "-I$(Join-Path $root 'include')" `
+    "-I$wled" `
+    (Join-Path $wled "ledbasic_interpreter_build.cpp") `
+    (Join-Path $wled "ledbasic_runtime.cpp") `
+    (Join-Path $native "test_wled_runtime.cpp") `
+    -o $runtimeOut
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $runtimeOut
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 & $out
 exit $LASTEXITCODE

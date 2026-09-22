@@ -1,6 +1,6 @@
 # LEDBasic
 
-A **BASIC language interpreter** for programming LED animations with [FastLED](https://github.com/FastLED/FastLED). Features virtual strip layering with blend modes, runtime parameter discovery, serial command interface, and 10 ready-to-use example programs. Designed as a PlatformIO library for easy integration into LED projects.
+A **BASIC language interpreter** for programming LED animations. Standalone sketches typically use [FastLED](https://github.com/FastLED/FastLED); a WLED usermod is included that does **not** link FastLED. Features virtual strip layering with blend modes, runtime parameter discovery, serial command interface, and 10 ready-to-use example programs. Designed as a PlatformIO library for easy integration into LED projects.
 
 ## Features
 
@@ -19,7 +19,8 @@ Add to your `platformio.ini`:
 
 ```ini
 lib_deps =
-    https://github.com/bradb/LEDBasic.git#main
+    fastled/FastLED @ ^3.9.0
+    https://github.com/bl0rq/LEDBasic.git
 ```
 
 ### Manual
@@ -118,11 +119,15 @@ Commands (newline-terminated, no blocking read):
 - `0:p` — Display parameters for strip 0
 - `0:speed=30` — Set parameter `speed` to 30 on strip 0
 
+## WLED usermod
+
+An opt-in usermod lives in [`wled/`](wled/readme.md). It registers a **LEDBasic** effect, runs the compiled-in example programs, and copies pixels into the current WLED segment. Enable it from a local `platformio_override.ini` (see the usermod readme). ESP32 only; FastLED is not linked.
+
 ## Dependencies
 
-- [FastLED](https://github.com/FastLED/FastLED) ^3.9.0
 - Arduino framework
 - ESP32 platform (ESP-IDF hardware RNG used when available, falls back to Arduino `random()`)
+- [FastLED](https://github.com/FastLED/FastLED) ^3.9.0 for standalone sketches (add it in your project `lib_deps`). Not used by the WLED usermod (`LEDBASIC_NO_FASTLED`).
 
 ## Tests
 

@@ -1,0 +1,10 @@
+{
+  "name": "LEDBasicWled",
+  "version": "0.1.0",
+  "description": "WLED usermod that runs LEDBasic programs as a custom effect",
+  "build": {
+    "libArchive": false,
+    "flags": "-DLEDBASIC_NO_FASTLED",
+    "extraScript": "extra_script.py"
+  }
+}

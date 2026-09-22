@@ -2,7 +2,7 @@
 #define BASIC_INTERPRETER_H
 
 #include <Arduino.h>
-#include <FastLED.h>
+#include "LedBasicPixels.h"
 #include <atomic>
 #include <map>
 #include <vector>
