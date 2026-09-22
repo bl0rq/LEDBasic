@@ -971,6 +971,18 @@ ASTNode* BasicParser::parseSnippet() {
 static unsigned long ledbasicDefaultMillis(void*) { return millis(); }
 static void ledbasicDefaultDelay(int ms, void*) { delay(ms); }
 
+static void ledbasicPhysicalShow() {
+#ifndef LEDBASIC_NO_FASTLED
+    FastLED.show();
+#endif
+}
+
+static void ledbasicPhysicalBrightness(uint8_t b) {
+#ifndef LEDBASIC_NO_FASTLED
+    FastLED.setBrightness(b);
+#endif
+}
+
 static bool isDebuggableStatement(NodeType t) {
     switch (t) {
         case NODE_ASSIGNMENT:
@@ -1151,7 +1163,7 @@ void BasicInterpreter::runLoop(unsigned long timeMs) {
         execute(loopNode->children[1]);
 
         if (!showCalled && autoShow && !abortExecution.load(std::memory_order_acquire)) {
-            FastLED.show();
+            ledbasicPhysicalShow();
         }
     }
 }
@@ -1623,7 +1635,7 @@ Value BasicInterpreter::callLedFunction(TokenType func, const std::vector<Value>
         case TOK_SHOW: {
             showCalled = true;
             if (autoShow) {
-                FastLED.show();
+                ledbasicPhysicalShow();
             }
             break;
         }
@@ -1632,7 +1644,7 @@ Value BasicInterpreter::callLedFunction(TokenType func, const std::vector<Value>
             if (args.size() >= 1) {
                 outputBrightness = (uint8_t)constrain((int)args[0].asNumber(), 0, 255);
                 if (ownsPhysicalOutput) {
-                    FastLED.setBrightness(outputBrightness);
+                    ledbasicPhysicalBrightness(outputBrightness);
                 }
             }
             break;
