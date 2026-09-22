@@ -13,6 +13,8 @@ FetchContent_MakeAvailable(ftxui)
 add_executable(ledbasic-tui
     main.cpp
     editor.cpp
+    ../host/WledJson.cpp
+    ../host/WledClient.cpp
 )
 target_include_directories(ledbasic-tui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 file(TO_CMAKE_PATH "${LEDBASIC_ROOT}/examples/bas" LEDBASIC_EXAMPLES_PATH)
@@ -26,5 +28,5 @@ target_link_libraries(ledbasic-tui PRIVATE
     ftxui::component
 )
 if(WIN32)
-    target_link_libraries(ledbasic-tui PRIVATE user32)
+    target_link_libraries(ledbasic-tui PRIVATE user32 winhttp)
 endif()

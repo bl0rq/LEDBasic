@@ -1,6 +1,8 @@
 #ifndef LEDBASIC_RUNTIME_H
 #define LEDBASIC_RUNTIME_H
 
+#include "ledbasic_programs.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -17,12 +19,26 @@ struct LedBasicWledParam {
   float value;
   float minV;
   float maxV;
+  float stepV;
 };
 
 int ledbasicWledProgramCount();
 const char* ledbasicWledProgramName(int index);
 
+// Integer ensure selects a built-in by index. Name ensure selects a built-in
+// or a user script. User scripts come from the filesystem set with SetFs.
 bool ledbasicWledEnsure(uint8_t segId, int numLeds, int programIndex);
+bool ledbasicWledEnsure(uint8_t segId, int numLeds, const char* programName);
+
+void ledbasicWledSetFs(const LedBasicFs* fs);
+const LedBasicFs* ledbasicWledFs();
+const char* ledbasicWledActiveName();
+bool ledbasicWledSetActiveName(const char* name);
+void ledbasicWledRequestReload();
+int ledbasicWledListPrograms(LedBasicProgramInfo* out, int maxOut);
+int ledbasicWledWriteUser(const char* name, const char* source, int len);
+int ledbasicWledReadUser(const char* name, char* buf, int cap, int* outLen);
+int ledbasicWledRemoveUser(const char* name);
 void ledbasicWledApplySliders(uint8_t segId, uint8_t sx, uint8_t ix, uint8_t c1, uint8_t c2,
                               bool o1, bool o2, bool o3);
 bool ledbasicWledRun(uint8_t segId, unsigned long nowMs);

@@ -43,11 +43,23 @@ $wled = Join-Path $root "wled"
     "-I$(Join-Path $root 'include')" `
     "-I$wled" `
     (Join-Path $wled "ledbasic_interpreter_build.cpp") `
+    (Join-Path $wled "ledbasic_programs.cpp") `
     (Join-Path $wled "ledbasic_runtime.cpp") `
     (Join-Path $native "test_wled_runtime.cpp") `
     -o $runtimeOut
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $runtimeOut
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host "Compiling WLED client JSON"
+$clientOut = Join-Path $native "test_wled_client.exe"
+& $cxx -std=c++17 -O0 -g `
+    "-I$(Join-Path $root 'tools\host')" `
+    (Join-Path $root "tools\host\WledJson.cpp") `
+    (Join-Path $native "test_wled_client.cpp") `
+    -o $clientOut
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $clientOut
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 & $out

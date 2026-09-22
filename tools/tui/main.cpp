@@ -1,4 +1,5 @@
 #include "HostSession.h"
+#include "WledClient.h"
 #include "editor.h"
 #include "theme.h"
 
@@ -8,6 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -65,6 +67,43 @@ static std::string defaultProgramPath() {
     return p.string();
 }
 
+static std::string deviceUrlPath() {
+#ifdef _WIN32
+    const char* appdata = std::getenv("APPDATA");
+    if (!appdata || !appdata[0]) return {};
+    fs::path dir = fs::path(appdata) / "LEDBasic";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    return (dir / "device.url").string();
+#else
+    return {};
+#endif
+}
+
+static std::string loadDeviceUrl() {
+    std::string path = deviceUrlPath();
+    if (path.empty()) return {};
+    std::ifstream in(path);
+    if (!in) return {};
+    std::string line;
+    std::getline(in, line);
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\n')) line.pop_back();
+    return line;
+}
+
+static void saveDeviceUrl(const std::string& url) {
+    std::string path = deviceUrlPath();
+    if (path.empty()) return;
+    std::ofstream out(path);
+    if (out) out << url;
+}
+
+static std::string trimCopy(std::string s) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
+    return s;
+}
+
 static const char* stateLabel(ledbasic::Snapshot::State s) {
     switch (s) {
         case ledbasic::Snapshot::Playing: return "PLAY";
@@ -101,11 +140,13 @@ int main(int argc, char** argv) {
 
     int leds = ledbasic::HostSession::kDefaultLeds;
     std::string startFile = defaultProgramPath();
+    std::string deviceArg;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--leds" && i + 1 < argc) leds = std::atoi(argv[++i]);
+        else if (a == "--device" && i + 1 < argc) deviceArg = argv[++i];
         else if (a == "--help" || a == "-h") {
-            std::printf("ledbasic-tui [file.bas] [--leds N]\n");
+            std::printf("ledbasic-tui [file.bas] [--leds N] [--device http://wled-ip]\n");
             return 0;
         } else if (a[0] != '-') {
             startFile = a;
@@ -157,8 +198,31 @@ int main(int argc, char** argv) {
     bool showViewMenu = false;
     bool showRunMenu = false;
     bool showDebugMenu = false;
+    bool showDeviceMenu = false;
+    bool showDeviceHost = false;
+    bool showDevicePull = false;
+    bool showDevicePush = false;
+    bool showDiscard = false;
     std::string pathInput;
+    std::string deviceHostInput;
+    std::string devicePushInput;
+    std::string deviceStatus = " device: off ";
+    std::vector<std::string> deviceLabels{"  (refresh the device) "};
+    std::vector<std::string> deviceNames;
+    std::vector<std::string> deviceOrigins;
+    int deviceIndex = 0;
+    ledbasic::WledClient device;
+    std::function<void()> afterDiscard;
     float speed = 1.0f;
+    {
+        std::string saved = deviceArg.empty() ? loadDeviceUrl() : trimCopy(deviceArg);
+        if (!saved.empty()) {
+            device.setBaseUrl(saved);
+            deviceHostInput = saved;
+            if (!deviceArg.empty()) saveDeviceUrl(saved);
+            deviceStatus = " device: " + saved;
+        }
+    }
 
     auto pushLog = [&](const std::string& line) {
         immediateLog.push_back(line);
@@ -240,7 +304,118 @@ int main(int argc, char** argv) {
     };
 
     auto closeMenus = [&] {
-        showFileMenu = showViewMenu = showRunMenu = showDebugMenu = false;
+        showFileMenu = showViewMenu = showRunMenu = showDebugMenu = showDeviceMenu = false;
+    };
+
+    auto selectedDeviceName = [&]() -> std::string {
+        if (deviceIndex < 0 || deviceIndex >= (int)deviceNames.size()) return {};
+        return deviceNames[(size_t)deviceIndex];
+    };
+
+    auto refreshDevice = [&]() -> std::string {
+        if (!device.ready()) {
+            deviceStatus = " device: set a host ";
+            return {};
+        }
+        std::string keep = selectedDeviceName();
+        ledbasic::DeviceCatalog catalog;
+        std::string err;
+        if (!device.listPrograms(catalog, err)) {
+            deviceStatus = " device: " + err;
+            return {};
+        }
+        deviceLabels.clear();
+        deviceNames.clear();
+        deviceOrigins.clear();
+        for (const auto& program : catalog.programs) {
+            deviceNames.push_back(program.name);
+            deviceOrigins.push_back(program.origin);
+            deviceLabels.push_back(std::string("  ") + program.name +
+                                    (program.origin == "user" ? "  " : "  (built-in) "));
+        }
+        if (deviceLabels.empty()) deviceLabels.push_back("  (none) ");
+        deviceIndex = 0;
+        for (int i = 0; i < (int)deviceNames.size(); i++) {
+            if (deviceNames[(size_t)i] == keep) deviceIndex = i;
+        }
+        deviceStatus = " device: " + catalog.active + " @ " + device.baseUrl();
+        return catalog.active;
+    };
+
+    auto pullDevice = [&]() {
+        std::string name = selectedDeviceName();
+        if (name.empty()) {
+            deviceStatus = " device: refresh, then pick a script ";
+            return;
+        }
+        auto go = [&, name]() {
+            std::string src;
+            std::string err;
+            if (!device.getSource(name, src, err)) {
+                deviceStatus = " device: " + err;
+                return;
+            }
+            session.stop();
+            editor->setText(src);
+            filePath.clear();
+            session.clearBreakpoints();
+            editor->setBreakpoints({});
+            if (!session.loadSource(src, name)) {
+                auto diags = session.diagnostics();
+                if (!diags.empty()) editor->setErrorLine(diags[0].line);
+                deviceStatus = " device: pulled " + name + " (load error)";
+            } else {
+                editor->setErrorLine(0);
+                deviceStatus = " device: pulled " + name;
+            }
+            editor->clearDirty();
+        };
+        if (editor->dirty()) {
+            afterDiscard = go;
+            showDiscard = true;
+            return;
+        }
+        go();
+    };
+
+    auto pushDevice = [&]() {
+        std::string name = trimCopy(devicePushInput);
+        if (name.empty()) {
+            deviceStatus = " device: enter a script name ";
+            return;
+        }
+        bool builtin = false;
+        for (size_t i = 0; i < deviceNames.size(); i++) {
+            if (deviceNames[i] == name && (i >= deviceOrigins.size() || deviceOrigins[i] != "user")) builtin = true;
+        }
+        if (builtin) {
+            deviceStatus = " device: built-ins stay read-only; choose a new name ";
+            return;
+        }
+        std::string err;
+        if (!device.putSource(name, editor->getText(), err)) {
+            deviceStatus = " device: " + err;
+            return;
+        }
+        showDevicePush = false;
+        refreshDevice();
+        deviceStatus = " device: saved " + name;
+    };
+
+    auto activateDevice = [&]() {
+        std::string name = selectedDeviceName();
+        if (name.empty()) {
+            deviceStatus = " device: refresh, then pick a script ";
+            return;
+        }
+        std::string err;
+        if (!device.activate(name, err)) {
+            deviceStatus = " device: " + err;
+            return;
+        }
+        std::string active = refreshDevice();
+        if (active == name) deviceStatus = " device: running " + name;
+        else if (!active.empty()) deviceStatus = " device: could not run " + name;
     };
 
     auto toggleMenu = [&](bool* which) {
@@ -291,11 +466,12 @@ int main(int argc, char** argv) {
     auto viewBtn = menuBtn(" View ", [&] { toggleMenu(&showViewMenu); });
     auto runBtn = menuBtn(" Run ", [&] { toggleMenu(&showRunMenu); });
     auto debugBtn = menuBtn(" Debug ", [&] { toggleMenu(&showDebugMenu); });
+    auto deviceBtn = menuBtn(" Device ", [&] { toggleMenu(&showDeviceMenu); });
     auto helpBtn = menuBtn(" Help ", [&] {
         closeMenus();
         showHelp = true;
     });
-    auto menuBar = Container::Horizontal({fileBtn, viewBtn, runBtn, debugBtn, helpBtn});
+    auto menuBar = Container::Horizontal({fileBtn, viewBtn, runBtn, debugBtn, deviceBtn, helpBtn});
 
     auto wrapMenu = [](const char* title, Component inner) {
         inner |= Renderer([title](Element e) {
@@ -382,6 +558,38 @@ int main(int argc, char** argv) {
         }),
     }));
 
+    auto deviceMenu = wrapMenu("Device", Container::Vertical({
+        menuBtn(" Set host…              ", [&] {
+            closeMenus();
+            deviceHostInput = device.baseUrl();
+            showDeviceHost = true;
+        }),
+        menuBtn(" Refresh                ", [&] {
+            closeMenus();
+            refreshDevice();
+        }),
+        menuBtn(" Pull…                  ", [&] {
+            closeMenus();
+            showDevicePull = true;
+        }),
+        menuBtn(" Push…                  ", [&] {
+            closeMenus();
+            std::string seed = selectedDeviceName();
+            if (seed.empty()) seed = "MyEffect";
+            else if (deviceIndex >= 0 && deviceIndex < (int)deviceOrigins.size() &&
+                     deviceOrigins[(size_t)deviceIndex] != "user") {
+                seed += "Copy";
+            }
+            devicePushInput = seed;
+            showDevicePush = true;
+        }),
+        menuBtn(" Activate               ", [&] {
+            closeMenus();
+            activateDevice();
+        }),
+        Renderer([&] { return text(deviceStatus) | color(theme::dim()); }),
+    }));
+
     auto openPathField = Input(&pathInput, "path to .bas file");
     auto savePathField = Input(&pathInput, "path to .bas file");
     std::vector<std::string> exampleLabels;
@@ -443,7 +651,8 @@ int main(int argc, char** argv) {
             return vbox(Elements{
                 text("LEDBasic TUI") | bold | color(theme::accent()) | center,
                 separator(),
-                text(" Click File / View / Run / Debug / Help, or use keys:"),
+                text(" Click File / View / Run / Debug / Device / Help, or use keys:"),
+                text(" Device pushes and pulls scripts on a WLED board"),
                 text(" F5 Run/Continue   Esc Stop   F8 Step   F10 Step Over"),
                 text(" F9 Toggle breakpoint on the current line"),
                 text(" F4 Immediate    Ctrl+O Open   Ctrl+S Save   Ctrl+N New"),
@@ -455,6 +664,81 @@ int main(int argc, char** argv) {
     });
     helpDialog |= Renderer([](Element e) {
         return e | border | bgcolor(theme::chrome()) | size(WIDTH, EQUAL, 70) | center;
+    });
+
+    auto deviceHostField = Input(&deviceHostInput, "http://192.168.1.20");
+    auto deviceHostDialog = Container::Vertical({
+        Renderer([] { return text(" WLED host") | bold | color(theme::accent()); }),
+        Renderer([] { return separator(); }),
+        deviceHostField,
+        Container::Horizontal({
+            menuBtn(" Save ", [&] {
+                std::string host = trimCopy(deviceHostInput);
+                if (host.empty()) {
+                    deviceStatus = " device: set a host ";
+                    return;
+                }
+                device.setBaseUrl(host);
+                saveDeviceUrl(host);
+                showDeviceHost = false;
+                refreshDevice();
+            }),
+            menuBtn(" Cancel ", [&] { showDeviceHost = false; }),
+        }),
+    });
+    deviceHostDialog |= Renderer([](Element e) {
+        return e | border | bgcolor(theme::chrome()) | size(WIDTH, EQUAL, 52);
+    });
+
+    auto deviceList = Menu(&deviceLabels, &deviceIndex) | vscroll_indicator | size(HEIGHT, LESS_THAN, 12);
+    auto devicePullDialog = Container::Vertical({
+        Renderer([] { return text(" Pull from device") | bold | color(theme::accent()); }),
+        Renderer([] { return separator(); }),
+        deviceList,
+        Container::Horizontal({
+            menuBtn(" Pull ", [&] {
+                showDevicePull = false;
+                pullDevice();
+            }),
+            menuBtn(" Cancel ", [&] { showDevicePull = false; }),
+        }),
+    });
+    devicePullDialog |= Renderer([](Element e) {
+        return e | border | bgcolor(theme::chrome()) | size(WIDTH, EQUAL, 42);
+    });
+
+    auto devicePushField = Input(&devicePushInput, "script name");
+    auto devicePushDialog = Container::Vertical({
+        Renderer([] { return text(" Push to device") | bold | color(theme::accent()); }),
+        Renderer([] { return separator(); }),
+        Renderer([] { return text(" Built-in names need a new name") | color(theme::dim()); }),
+        devicePushField,
+        Container::Horizontal({
+            menuBtn(" Push ", [&] { pushDevice(); }),
+            menuBtn(" Cancel ", [&] { showDevicePush = false; }),
+        }),
+    });
+    devicePushDialog |= Renderer([](Element e) {
+        return e | border | bgcolor(theme::chrome()) | size(WIDTH, EQUAL, 52);
+    });
+
+    auto discardDialog = Container::Vertical({
+        Renderer([] { return text(" Discard unsaved edits?") | bold | color(theme::accent()); }),
+        Container::Horizontal({
+            menuBtn(" Discard ", [&] {
+                showDiscard = false;
+                auto next = std::move(afterDiscard);
+                afterDiscard = nullptr;
+                if (next) next();
+            }),
+            menuBtn(" Cancel ", [&] {
+                showDiscard = false;
+                afterDiscard = nullptr;
+            }),
+        }),
+    });
+    discardDialog |= Renderer([](Element e) {
+        return e | border | bgcolor(theme::chrome()) | size(WIDTH, EQUAL, 40);
     });
 
     auto workspace = Container::Vertical({
@@ -559,6 +843,7 @@ int main(int argc, char** argv) {
                 text(" F10 Over ") | color(theme::dim()),
                 text(" Esc Stop ") | color(theme::dim()),
                 filler(),
+                text(deviceStatus) | color(theme::dim()),
                 text(editor->readOnly() ? " running " : " editing ") | color(theme::dim()),
             }) | bgcolor(theme::chrome()),
         }) | bgcolor(theme::bg());
@@ -570,9 +855,14 @@ int main(int argc, char** argv) {
     renderer |= Modal(viewMenu, &showViewMenu);
     renderer |= Modal(runMenu, &showRunMenu);
     renderer |= Modal(debugMenu, &showDebugMenu);
+    renderer |= Modal(deviceMenu, &showDeviceMenu);
     renderer |= Modal(openDialog, &showOpen);
     renderer |= Modal(saveDialog, &showSaveAs);
     renderer |= Modal(helpDialog, &showHelp);
+    renderer |= Modal(deviceHostDialog, &showDeviceHost);
+    renderer |= Modal(devicePullDialog, &showDevicePull);
+    renderer |= Modal(devicePushDialog, &showDevicePush);
+    renderer |= Modal(discardDialog, &showDiscard);
 
     renderer |= CatchEvent([&](Event e) {
         if (e == Event::F1) {
@@ -589,9 +879,12 @@ int main(int argc, char** argv) {
             return true;
         }
         if (e == Event::Escape) {
-            if (showHelp || showOpen || showSaveAs || showFileMenu || showViewMenu ||
-                showRunMenu || showDebugMenu) {
+            if (showHelp || showOpen || showSaveAs || showDeviceHost || showDevicePull ||
+                showDevicePush || showDiscard || showFileMenu || showViewMenu || showRunMenu ||
+                showDebugMenu || showDeviceMenu) {
                 showHelp = showOpen = showSaveAs = false;
+                showDeviceHost = showDevicePull = showDevicePush = showDiscard = false;
+                afterDiscard = nullptr;
                 closeMenus();
                 return true;
             }
