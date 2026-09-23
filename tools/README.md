@@ -55,9 +55,12 @@ Built by default (`-DLEDBASIC_BUILD_TUI=ON`):
 ```
 tools/build/tui/ledbasic-tui
 tools/build/tui/ledbasic-tui examples/bas/Breathing.bas --leds 120
+tools/build/tui/ledbasic-tui --device http://192.168.4.1
 ```
 
 Run from the repo root so example paths resolve. Windows Terminal (or any UTF-8 truecolor terminal) is recommended.
+
+F5 still runs the simulator on this PC. The Device menu talks to a board running `firmware/`. Shift+F5 sends the open editor buffer to the board without storing it. Connect saves the URL in `%APPDATA%\LEDBasic\device.url`. `--device` uses that URL for one launch.
 
 ## Manual TUI checklist
 
