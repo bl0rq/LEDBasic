@@ -150,6 +150,21 @@ tools/build/tui/ledbasic-tui
 
 `ledbasic-tui` is a QBasic-inspired TUI: editor, live LED strip, F5 run, F8 step, F9 breakpoints, Immediate window.
 
+## Device firmware
+
+`firmware/` is a PlatformIO image for a classic ESP32. It runs LEDBasic on one strip and serves a setup page and JSON API over Wi-Fi.
+
+A new board opens an access point named `LEDBasic-XXXX` with password `ledbasic`. The page is at http://192.168.4.1. After the board joins a network it is at http://ledbasic.local as well as its station IP. Hold the GPIO17 button for five seconds to forget the network and open the access point again.
+
+From `firmware/`:
+
+```
+pio run -e esp32dev -t upload
+pio run -e esp32dev -t uploadfs
+```
+
+Factory LED settings are WS2812, color order GRB, GPIO16, 60 LEDs. Change type, order, length, and pin on the page or with `PUT /api/led`. The ten example programs are built in. User programs are stored on the device.
+
 ## License
 
 MIT
