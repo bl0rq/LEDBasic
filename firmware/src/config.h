@@ -19,6 +19,8 @@ static const char* kDefaultOrder = "GRB";
 static const char* kDefaultProgram = "Rainbow";
 static const int kMaxLeds = 1024;
 static const int kButtonPin = 17;
+// Elite 6D-EXMU energy-saving relay. WLED "Invert" means high connects input V+ to the outputs.
+static const int kRelayPin = 18;
 static const char* kApPassword = "ledbasic";
 static const char* kHostname = "ledbasic";
 static const char* kFirmwareVersion = "0.1.0";

@@ -17,6 +17,8 @@ void outputSetBrightness(int brightness);
 int outputBrightness();
 int outputFps();
 void outputNoteFrame();
+// Writes up to maxSamples RGB triples from the live strip. Returns the sample count.
+int outputPreview(uint8_t* rgb, int maxSamples);
 
 // loadProgram drops the running program before the new source is parsed.
 // On failure the previous source is loaded again and diags describes the rejection.

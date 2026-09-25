@@ -9,6 +9,8 @@
 #include "BasicInterpreter.h"
 #include "catalog.h"
 #include "config.h"
+#include "output.h"
+#include "page.h"
 
 static WebServer gServer(80);
 static DNSServer gDns;
@@ -164,18 +166,36 @@ static bool asJson() {
     return gServer.arg("plain").length() > 0;
 }
 
+static bool clientWantsJson() {
+    if (asJson()) return true;
+    return gServer.header("Accept").indexOf("application/json") >= 0;
+}
+
+static void sendHome() {
+    gServer.sendHeader("Cache-Control", "no-store");
+    gServer.send_P(200, PSTR("text/html"), kPage);
+}
+
 static void sendJson(int code, const String& body) {
     gServer.send(code, "application/json", body);
 }
 
-static String pageHtml(const String& error, bool doScan);
-
 static void sendPage(int code, const String& error) {
-    gServer.send(code, "text/html", pageHtml(error, gServer.hasArg("scan")));
+    if (error.length() == 0) {
+        sendHome();
+        return;
+    }
+    String html;
+    html.reserve(500 + error.length());
+    html += FPSTR(kNoticePrefix);
+    html += htmlEscape(error);
+    html += FPSTR(kNoticeSuffix);
+    gServer.sendHeader("Cache-Control", "no-store");
+    gServer.send(code, "text/html", html);
 }
 
 static void sendOk() {
-    if (asJson()) {
+    if (clientWantsJson()) {
         sendJson(200, "{\"ok\":true}");
         return;
     }
@@ -184,7 +204,7 @@ static void sendOk() {
 }
 
 static void sendPending() {
-    if (asJson()) {
+    if (clientWantsJson()) {
         sendJson(202, "{\"ok\":true,\"pending\":true}");
         return;
     }
@@ -193,7 +213,7 @@ static void sendPending() {
 }
 
 static void sendError(int code, const char* message, const std::vector<OutputDiag>* diags) {
-    if (!asJson() && gServer.method() == HTTP_POST) {
+    if (!clientWantsJson() && gServer.method() == HTTP_POST) {
         sendPage(code, message);
         return;
     }
@@ -215,13 +235,11 @@ static void sendError(int code, const char* message, const std::vector<OutputDia
 }
 
 static void sendRestarting() {
-    if (asJson()) {
+    if (clientWantsJson()) {
         sendJson(200, "{\"ok\":true,\"restart\":true}");
     } else {
-        gServer.send(200, "text/html",
-                     "<!doctype html><meta name=viewport content=\"width=device-width,initial-scale=1\">"
-                     "<meta http-equiv=refresh content=\"8;url=/\">"
-                     "<p>Restarting. Reconnect, then open this page again.</p>");
+        gServer.sendHeader("Cache-Control", "no-store");
+        gServer.send_P(200, PSTR("text/html"), kRestartPage);
     }
     requestRestart();
 }
@@ -633,136 +651,25 @@ static void handleNotFound() {
     gServer.send(404, "text/plain", "not found");
 }
 
-static String optionList(const char** values, int count, const String& current) {
-    String html;
-    for (int i = 0; i < count; i++) {
-        html += "<option";
-        if (current == values[i]) html += " selected";
-        html += ">";
-        html += values[i];
-        html += "</option>";
+static void handlePreview() {
+    uint8_t rgb[64 * 3];
+    int n = outputPreview(rgb, 64);
+    char body[64 * 16];
+    size_t used = 0;
+    body[used++] = '[';
+    for (int i = 0; i < n; i++) {
+        int wrote = snprintf(body + used, sizeof(body) - used, "%s[%u,%u,%u]",
+                             i ? "," : "", rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+        if (wrote < 0 || (size_t)wrote >= sizeof(body) - used) break;
+        used += (size_t)wrote;
     }
-    return html;
-}
-
-static String pinOptions(int current) {
-    String html;
-    for (int i = 0; i < kDataPinCount; i++) {
-        html += "<option value=\"" + String(kDataPins[i]) + "\"";
-        if (kDataPins[i] == current) html += " selected";
-        html += ">" + String(kDataPins[i]) + "</option>";
-    }
-    return html;
-}
-
-static String pageHtml(const String& error, bool doScan) {
-    String html;
-    html.reserve(12000);
-    html += F("<!doctype html><html><head><meta charset=utf-8>"
-              "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
-              "<title>LEDBasic</title><style>"
-              "body{font-family:sans-serif;max-width:42rem;margin:1rem auto;padding:0 1rem}"
-              "label{display:block;margin:.4rem 0}button,input,select{font:inherit}"
-              "table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #ccc;"
-              "text-align:left;padding:.3rem}.error{color:#900}form.inline{display:inline}"
-              "</style></head><body><h1>LEDBasic</h1>");
-    if (error.length()) {
-        html += "<p class=error>";
-        html += htmlEscape(error);
-        html += "</p>";
-    }
-    html += "<p>";
-    html += modeName();
-    html += " ";
-    html += htmlEscape(currentSsid());
-    html += " ";
-    html += htmlEscape(currentIp());
-    html += " ";
-    html += kHostname;
-    html += ".local</p><p>Program ";
-    if (gRunningUnsaved) html += "unsaved buffer";
-    else html += htmlEscape(gRunningName);
-    html += " brightness ";
-    html += String(outputBrightness());
-    html += " fps ";
-    html += String(outputFps());
-    html += "</p>";
-    if (!gLoadFailure.empty()) {
-        html += "<p class=error>";
-        html += htmlEscape(gLoadFailure[0].message);
-        html += "</p>";
-    }
-
-    html += F("<h2>Wi-Fi</h2><p>Access point password is ledbasic. "
-              "Hold the button on GPIO17 for 5 seconds to forget the network.</p>"
-              "<p><a href=\"/?scan=1\">Scan networks</a></p>");
-    if (doScan) {
-        int count = scanNetworks();
-        for (int i = 0; i < count; i++) {
-            String ssid = WiFi.SSID(i);
-            if (ssid.length() == 0) continue;
-            html += "<form method=post action=/api/wifi><input type=hidden name=ssid value=\"";
-            html += htmlEscape(ssid);
-            html += "\"><label>";
-            html += htmlEscape(ssid);
-            html += " (";
-            html += String(WiFi.RSSI(i));
-            html += " dBm) <input type=password name=password placeholder=password></label>"
-                    "<button type=submit>Join</button></form>";
-        }
-        WiFi.scanDelete();
-    }
-    html += F("<form method=post action=/api/wifi><label>SSID <input name=ssid required></label>"
-              "<label>Password <input type=password name=password></label>"
-              "<button type=submit>Join</button></form>"
-              "<form method=post action=/api/wifi/reset><button type=submit>Forget network</button></form>");
-
-    html += F("<h2>LEDs</h2><form method=post action=/api/led>");
-    html += "<label>Type <select name=type>";
-    html += optionList(kLedTypes, kLedTypeCount, gCfg->ledType);
-    html += "</select></label><label>Order <select name=order>";
-    html += optionList(kColorOrders, kColorOrderCount, gCfg->colorOrder);
-    html += "</select></label><label>Length <input name=length type=number min=1 max=1024 value=\"";
-    html += String(gCfg->length);
-    html += "\"></label><label>Pin <select name=pin>";
-    html += pinOptions(gCfg->pin);
-    html += "</select></label><label>Brightness <input name=brightness type=number min=0 max=255 value=\"";
-    html += String(outputBrightness());
-    html += "\"></label><button type=submit>Save</button></form>";
-
-    html += F("<h2>Programs</h2><table><tr><th>Name</th><th></th><th></th></tr>");
-    std::vector<ProgramInfo> programs;
-    listPrograms(programs);
-    for (size_t i = 0; i < programs.size(); i++) {
-        String name = htmlEscape(programs[i].name);
-        bool active = !gRunningUnsaved && programs[i].name == gRunningName;
-        html += "<tr><td>";
-        html += name;
-        if (programs[i].builtin) html += " (built-in)";
-        if (active) html += " running";
-        html += "</td><td><form class=inline method=post action=/api/program/activate>"
-                "<input type=hidden name=name value=\"";
-        html += name;
-        html += "\"><button type=submit>Run</button></form></td><td>";
-        if (!programs[i].builtin) {
-            html += "<form class=inline method=post action=/api/program/delete>"
-                    "<input type=hidden name=name value=\"";
-            html += name;
-            html += "\"><button type=submit>Delete</button></form>";
-        }
-        html += "</td></tr>";
-    }
-    html += F("</table><h3>Upload</h3>"
-              "<form method=post action=/api/program/upload enctype=multipart/form-data>"
-              "<label>Name <input name=name required></label>"
-              "<label>File <input type=file name=file accept=.bas,.txt></label>"
-              "<label><input type=checkbox name=activate value=1> Run after upload</label>"
-              "<button type=submit>Upload</button></form></body></html>");
-    return html;
+    if (used + 1 < sizeof(body)) body[used++] = ']';
+    body[used] = '\0';
+    sendJson(200, body);
 }
 
 static void handleRoot() {
-    sendPage(200, "");
+    sendHome();
 }
 
 static void registerRoutes() {
@@ -775,6 +682,7 @@ static void registerRoutes() {
     gServer.on("/fwlink", HTTP_GET, redirectHome);
 
     gServer.on("/api/status", HTTP_GET, handleStatus);
+    gServer.on("/api/preview", HTTP_GET, handlePreview);
     gServer.on("/api/led", HTTP_GET, handleLedGet);
     gServer.on("/api/led", HTTP_PUT, handleLedPut);
     gServer.on("/api/led", HTTP_POST, handleLedPut);
@@ -811,6 +719,8 @@ void netBegin(DeviceConfig& cfg) {
         Serial.printf("Joining %s\n", cfg.wifiSsid.c_str());
     }
     registerRoutes();
+    const char* headers[] = {"Accept"};
+    gServer.collectHeaders(headers, 1);
     gServer.begin();
 }
 
