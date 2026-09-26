@@ -11,17 +11,26 @@ end
 loop(time)
   n = numled()
   mid = n / 2
+  if mid < 1
+    mid = 1
+  end
   spin = time / speed
-  for i = 0 to n-1
-    dir = -1
-    if i < mid
-      dir = 1
+  leftDir = 1
+  rightDir = -1
+  if swap
+    leftDir = -1
+    rightDir = 1
+  end
+  for d = 0 to mid
+    h = d * 360 / mid
+    left = mid - 1 - d
+    right = mid + d
+    if left >= 0
+      sethsv(left, h + spin * leftDir, saturation, brightness_level)
     end
-    if swap
-      dir = 0 - dir
+    if right < n
+      sethsv(right, h + spin * rightDir, saturation, brightness_level)
     end
-    h = i * 360 / n + spin * dir
-    sethsv(i, h, saturation, brightness_level)
   next
   show()
 end
