@@ -1,4 +1,5 @@
 #include "BasicInterpreter.h"
+#include "Palettes.h"
 #ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES
 #endif
@@ -113,6 +114,7 @@ void BasicLexer::initKeywords() {
     keywords["setled"] = TOK_SETLED;
     keywords["setcolor"] = TOK_SETCOLOR;
     keywords["sethsv"] = TOK_SETHSV;
+    keywords["setpal"] = TOK_SETPAL;
     keywords["show"] = TOK_SHOW;
     keywords["clear"] = TOK_CLEAR;
     keywords["fill"] = TOK_FILL;
@@ -886,7 +888,7 @@ ASTNode* BasicParser::parsePrimary() {
         check(TOK_FLOOR) || check(TOK_CEIL) || check(TOK_ROUND) || check(TOK_MIN) ||
         check(TOK_MAX) || check(TOK_RANDOM) || check(TOK_MAP) || check(TOK_MILLIS) ||
         check(TOK_DELAY) || check(TOK_HSV_TO_RGB) || check(TOK_WHEEL) || check(TOK_SETLED) || check(TOK_SETCOLOR) || 
-        check(TOK_SETHSV) || check(TOK_SHOW) || check(TOK_CLEAR) || check(TOK_FILL) || 
+        check(TOK_SETHSV) || check(TOK_SETPAL) || check(TOK_SHOW) || check(TOK_CLEAR) || check(TOK_FILL) || 
         check(TOK_BRIGHTNESS) || check(TOK_NUMLED) || check(TOK_HSV) || check(TOK_RGB) ||
         check(TOK_GET_LED_R) || check(TOK_GET_LED_G) || check(TOK_GET_LED_B) ||
         check(TOK_SET_LED) || check(TOK_SET_ALL) || check(TOK_GET_LED_COUNT)) {
@@ -989,7 +991,7 @@ static bool isDebuggableStatement(NodeType t) {
 
 BasicInterpreter::BasicInterpreter(CRGB* ledArray, int ledCount)
     : leds(ledArray), numLeds(ledCount), showCalled(false), ownsPhysicalOutput(true),
-      autoShow(true), outputBrightness(255), masterBrightness(255), setupNode(nullptr), loopNode(nullptr),
+      autoShow(true), outputBrightness(255), masterBrightness(255), paletteIndex(0), setupNode(nullptr), loopNode(nullptr),
       abortExecution(false), currentLine(0), currentColumn(0), statementDepth(0),
       millisFn(ledbasicDefaultMillis), delayFn(ledbasicDefaultDelay), clockUser(nullptr),
       debugHook(nullptr), debugHookUser(nullptr) {
@@ -1421,7 +1423,7 @@ Value BasicInterpreter::callFunction(TokenType func, const std::vector<Value>& a
         case TOK_ROUND: case TOK_MIN: case TOK_MAX: case TOK_RANDOM: case TOK_MAP:
         case TOK_MILLIS: case TOK_DELAY: case TOK_HSV_TO_RGB: case TOK_WHEEL:
             return callMathFunction(func, args);
-        case TOK_SETLED: case TOK_SETCOLOR: case TOK_SETHSV: case TOK_SHOW:
+        case TOK_SETLED: case TOK_SETCOLOR: case TOK_SETHSV: case TOK_SETPAL: case TOK_SHOW:
         case TOK_CLEAR: case TOK_FILL: case TOK_BRIGHTNESS: case TOK_NUMLED:
         case TOK_HSV: case TOK_RGB: case TOK_GET_LED_R: case TOK_GET_LED_G:
         case TOK_GET_LED_B: case TOK_SET_LED: case TOK_SET_ALL: case TOK_GET_LED_COUNT:
@@ -1594,6 +1596,20 @@ Value BasicInterpreter::callLedFunction(TokenType func, const std::vector<Value>
             break;
         }
 
+        case TOK_SETPAL: {
+            if (args.size() >= 2) {
+                int index = (int)args[0].asNumber();
+                int position = (int)args[1].asNumber();
+                position %= 256;
+                if (position < 0) position += 256;
+                int brightness = 255;
+                if (args.size() >= 3) brightness = (int)args[2].asNumber();
+                PaletteRgb color = paletteColor(getPalette(), position, brightness);
+                applyLedColor(index, CRGB(color.r, color.g, color.b));
+            }
+            break;
+        }
+
         case TOK_CLEAR: {
             for (int i = 0; i < numLeds; i++) {
                 leds[i] = CRGB::Black;
@@ -1756,6 +1772,11 @@ bool BasicInterpreter::evalSnippet(const String& source, Value& result, Diagnost
 void BasicInterpreter::setMasterBrightness(uint8_t value) {
     masterBrightness.store(value, std::memory_order_relaxed);
     applyPhysicalBrightness();
+}
+
+void BasicInterpreter::setPalette(int index) {
+    if (index < 0 || index >= paletteCount()) index = 0;
+    paletteIndex.store(index, std::memory_order_relaxed);
 }
 
 void BasicInterpreter::applyPhysicalBrightness() {
@@ -2025,6 +2046,15 @@ void BasicLEDController::setMasterBrightness(uint8_t value) {
     if (interpreter) {
         interpreter->setMasterBrightness(value);
     }
+}
+
+int BasicLEDController::getPalette() const {
+    if (interpreter) return interpreter->getPalette();
+    return 0;
+}
+
+void BasicLEDController::setPalette(int index) {
+    if (interpreter) interpreter->setPalette(index);
 }
 
 // =============================================================================

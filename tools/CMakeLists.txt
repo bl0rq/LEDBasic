@@ -17,8 +17,12 @@ find_package(Threads REQUIRED)
 
 add_library(ledbasic_host STATIC
     "${LEDBASIC_ROOT}/src/BasicInterpreter.cpp"
+    "${LEDBASIC_ROOT}/src/Palettes.cpp"
     host/HostSession.cpp
 )
+
+add_executable(ledbasic_tests "${LEDBASIC_ROOT}/test/native/test_interpreter.cpp")
+target_link_libraries(ledbasic_tests PRIVATE ledbasic_host)
 target_include_directories(ledbasic_host PUBLIC
     "${LEDBASIC_ROOT}/test/native"
     "${LEDBASIC_ROOT}/include"

@@ -16,6 +16,8 @@ BasicLEDController* outputController();
 void outputSetBrightness(int brightness);
 int outputBrightness();
 int outputMaster();
+void outputSetPalette(const char* name);
+const char* outputPaletteName();
 int outputFps();
 void outputNoteFrame();
 // Writes up to maxSamples RGB triples from the live strip. Returns the sample count.

@@ -5,9 +5,13 @@ setup
 end
 
 loop(time)
+  n = numled()
+  if n < 1
+    n = 1
+  end
   for i = 0 to numled()-1
-    h = (i * 8 + sin(i * 0.2 + time / speed) * 40 + time / 15) % 360
-    sethsv(i, h, 255, 220)
+    wave = sin(i * 0.2 + time / speed) * 24
+    setpal(i, i * 255 / n + time / speed + wave, 220)
   next
   show()
 end

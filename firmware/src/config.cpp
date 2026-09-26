@@ -40,6 +40,7 @@ void sanitizeConfig(DeviceConfig& cfg) {
     if (!validDataPin(cfg.pin)) cfg.pin = kDefaultPin;
     if (!validBrightness(cfg.brightness)) cfg.brightness = kDefaultBrightness;
     if (!validBrightness(cfg.master)) cfg.master = kDefaultMaster;
+    if (findPalette(cfg.palette.c_str()) < 0) cfg.palette = kDefaultPalette;
     if (cfg.activeProgram.length() == 0) cfg.activeProgram = kDefaultProgram;
 }
 
@@ -52,6 +53,7 @@ bool loadConfig(DeviceConfig& cfg) {
         cfg.pin = kDefaultPin;
         cfg.brightness = kDefaultBrightness;
         cfg.master = kDefaultMaster;
+        cfg.palette = kDefaultPalette;
         cfg.activeProgram = kDefaultProgram;
         return false;
     }
@@ -63,6 +65,7 @@ bool loadConfig(DeviceConfig& cfg) {
     cfg.pin = prefs.getInt("pin", kDefaultPin);
     cfg.brightness = prefs.getInt("bri", kDefaultBrightness);
     cfg.master = prefs.getInt("master", kDefaultMaster);
+    cfg.palette = prefs.getString("pal", kDefaultPalette);
     cfg.activeProgram = prefs.getString("prog", kDefaultProgram);
     prefs.end();
     sanitizeConfig(cfg);
@@ -83,6 +86,7 @@ void saveConfig(const DeviceConfig& cfg) {
     prefs.putInt("pin", cfg.pin);
     prefs.putInt("bri", cfg.brightness);
     prefs.putInt("master", cfg.master);
+    prefs.putString("pal", cfg.palette);
     prefs.putString("prog", cfg.activeProgram);
     prefs.end();
 }

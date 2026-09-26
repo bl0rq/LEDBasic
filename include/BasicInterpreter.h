@@ -85,6 +85,7 @@ enum TokenType {
     TOK_SETLED,
     TOK_SETCOLOR,
     TOK_SETHSV,
+    TOK_SETPAL,
     TOK_SHOW,
     TOK_CLEAR,
     TOK_FILL,
@@ -414,6 +415,7 @@ private:
     bool autoShow;
     uint8_t outputBrightness;
     std::atomic<uint8_t> masterBrightness;
+    std::atomic<int> paletteIndex;
     void applyPhysicalBrightness();
     ASTNode* setupNode;
     ASTNode* loopNode;
@@ -488,6 +490,8 @@ public:
     uint8_t getOutputBrightness() const { return outputBrightness; }
     uint8_t getMasterBrightness() const { return masterBrightness.load(std::memory_order_relaxed); }
     void setMasterBrightness(uint8_t value);
+    int getPalette() const { return paletteIndex.load(std::memory_order_relaxed); }
+    void setPalette(int index);
 
     // Parameter management
     void addParameter(const Parameter& param);
@@ -621,6 +625,8 @@ public:
     uint8_t getOutputBrightness() const;
     uint8_t getMasterBrightness() const;
     void setMasterBrightness(uint8_t value);
+    int getPalette() const;
+    void setPalette(int index);
 
     void addParameter(const Parameter& param);
     void setParameterValue(const String& name, const Value& value);

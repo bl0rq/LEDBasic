@@ -1,6 +1,4 @@
 param speed number(25.0, 5.0, 120.0, 5.0)
-param hue number(200.0, 0.0, 360.0, 5.0)
-param hue2 number(30.0, 0.0, 360.0, 5.0)
 
 setup
   brightness(128)
@@ -18,10 +16,11 @@ loop(time)
     if d < 0
       d = 0 - d
     end
+    pos = i * 255 / n
     if d < 4
-      sethsv(i, hue, 255, 255)
+      setpal(i, pos, 255)
     else
-      sethsv(i, hue2, 200, 40)
+      setpal(i, pos, 40)
     end
   next
   show()

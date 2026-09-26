@@ -1,14 +1,14 @@
-param hue number(18.0, 0.0, 60.0, 2.0)
+param speed number(40.0, 10.0, 120.0, 5.0)
 
 setup
   brightness(128)
 end
 
 loop(time)
-  tick = floor(time / 40)
+  tick = floor(time / speed)
   for i = 0 to numled()-1
-    flick = 180 + (i * 17 + tick) % 75
-    sethsv(i, hue, 255, flick)
+    flick = 160 + (i * 17 + tick) % 95
+    setpal(i, flick)
   next
   show()
 end

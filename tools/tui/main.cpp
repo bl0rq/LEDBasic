@@ -1,5 +1,6 @@
 #include "DeviceClient.h"
 #include "HostSession.h"
+#include "Palettes.h"
 #include "editor.h"
 #include "theme.h"
 
@@ -834,6 +835,7 @@ int main(int argc, char** argv) {
                 text(" Click a line to move the caret; click the gutter for a breakpoint"),
                 text(" Immediate: ? x   x = 3   RUN   STOP"),
                 text(" Brightness slider scales the strip, and the board when connected"),
+                text(" Palette menu colors the programs that call setpal"),
             });
         }),
         menuBtn(" Close ", [&] { showHelp = false; }),
@@ -844,6 +846,11 @@ int main(int argc, char** argv) {
 
     int brightnessValue = 255;
     std::atomic<int> deviceBrightTarget{-1};
+    std::vector<std::string> paletteLabels;
+    for (int i = 0; i < paletteCount(); i++) paletteLabels.push_back(paletteName(i));
+    int paletteIndex = 0;
+    std::atomic<int> devicePaletteTarget{-1};
+    auto paletteDrop = Dropdown(&paletteLabels, &paletteIndex);
     SliderOption<int> brightOpt;
     brightOpt.value = &brightnessValue;
     brightOpt.min = 0;
@@ -854,10 +861,14 @@ int main(int argc, char** argv) {
         if (!device.baseUrl.empty()) deviceBrightTarget.store(brightnessValue);
     };
     auto brightnessSlider = Slider(brightOpt);
+    auto dimmerRow = Container::Horizontal({
+        brightnessSlider | flex,
+        paletteDrop | size(WIDTH, EQUAL, 18),
+    });
 
     auto workspace = Container::Vertical({
         menuBar,
-        brightnessSlider,
+        dimmerRow,
         editor,
         paramsFocus,
         immediateInput,
@@ -948,6 +959,11 @@ int main(int argc, char** argv) {
                       " %d LEDs   brightness %u   t=%lums   %.2fx   %s ",
                       (int)snap.leds.size(), (unsigned)snap.brightness, snap.timeMs,
                       speed, stateLabel(snap.state));
+        if (paletteIndex != session.palette()) {
+            session.setPalette(paletteIndex);
+            if (!device.baseUrl.empty()) devicePaletteTarget.store(paletteIndex);
+        }
+
         int pendingBright = deviceBrightTarget.exchange(-1);
         if (pendingBright >= 0) {
             bool busy;
@@ -975,9 +991,36 @@ int main(int argc, char** argv) {
             }
         }
 
+        int pendingPal = devicePaletteTarget.exchange(-1);
+        if (pendingPal >= 0) {
+            bool busy;
+            {
+                std::lock_guard<std::mutex> lock(deviceMu);
+                busy = deviceBusy;
+            }
+            if (busy) {
+                int empty = -1;
+                devicePaletteTarget.compare_exchange_strong(empty, pendingPal);
+            } else {
+                startDeviceJob([&, pendingPal] {
+                    int send = pendingPal;
+                    for (;;) {
+                        ledbasic::HttpResult result = device.setPalette(paletteName(send));
+                        if (!(result.transportOk && result.status >= 200 && result.status < 300) &&
+                            result.error.find("requires Windows") == std::string::npos) {
+                            deviceNote(ledbasic::deviceResultMessage(result));
+                        }
+                        int next = devicePaletteTarget.exchange(-1);
+                        if (next < 0 || next == send) return;
+                        send = next;
+                    }
+                });
+            }
+        }
+
         Element strip = vbox(Elements{
             text(stripHead) | color(theme::accent()),
-            brightnessSlider->Render(),
+            dimmerRow->Render(),
             renderStripCells(snap, 80),
         });
 

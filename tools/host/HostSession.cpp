@@ -1,4 +1,5 @@
 #include "HostSession.h"
+#include "Palettes.h"
 
 #include <chrono>
 #include <fstream>
@@ -439,6 +440,7 @@ bool HostSession::setLedCount(int n) {
     controller_->setClock(clockMillis, clockDelay, this);
     controller_->setDebugHook(debugHook, this);
     controller_->setMasterBrightness(master_);
+    controller_->setPalette(palette_);
     bool ok = true;
     if (!source_.empty()) {
         ok = controller_->loadProgram(toArduino(source_));
@@ -545,6 +547,18 @@ void HostSession::clearBreakpoints() {
     std::lock_guard<std::mutex> lock(mu_);
     breakpoints_.clear();
     lastSnap_.breakpoints.clear();
+}
+
+void HostSession::setPalette(int index) {
+    if (index < 0 || index >= paletteCount()) index = 0;
+    std::lock_guard<std::mutex> lock(mu_);
+    palette_ = index;
+    if (controller_) controller_->setPalette(palette_);
+}
+
+int HostSession::palette() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return palette_;
 }
 
 void HostSession::setMasterBrightness(int value) {

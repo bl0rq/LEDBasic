@@ -1,5 +1,7 @@
 #include "output.h"
 
+#include "Palettes.h"
+
 #include <FastLED.h>
 
 #include "BasicInterpreter.h"
@@ -14,6 +16,7 @@ static void setRelay(int brightness) {
 static CRGB* gLeds = nullptr;
 static int gLedCount = 0;
 static int gMaster = 255;
+static int gPalette = 0;
 static BasicLEDController* gController = nullptr;
 static fl::ChannelPtr gChannel;
 static String gGoodSource;
@@ -53,6 +56,7 @@ bool outputBegin(const String& ledType, const String& colorOrder, int length, in
     gController->setAutoShow(true);
     gController->setClock(netMillis, netDelay, nullptr);
     outputSetBrightness(brightness);
+    if (gController) gController->setPalette(gPalette);
     FastLED.clear(true);
     Serial.printf("Relay GPIO%d %s\n", kRelayPin, brightness > 0 ? "on" : "off");
     gFpsMark = millis();
@@ -77,6 +81,17 @@ int outputBrightness() {
 
 int outputMaster() {
     return gMaster;
+}
+
+void outputSetPalette(const char* name) {
+    int index = findPalette(name);
+    if (index < 0) index = 0;
+    gPalette = index;
+    if (gController) gController->setPalette(gPalette);
+}
+
+const char* outputPaletteName() {
+    return paletteName(gPalette);
 }
 
 int outputFps() {

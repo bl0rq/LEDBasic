@@ -9,9 +9,9 @@ loop(time)
   for i = 0 to numled()-1
     a = sin(i * scale + time / speed)
     b = sin(i * scale * 0.6 - time / speed * 0.7)
-    h = (a + b + 2) * 90
+    pos = (a + b + 2) * 64
     v = 140 + a * 80
-    sethsv(i, h, 255, v)
+    setpal(i, pos, v)
   next
   show()
 end

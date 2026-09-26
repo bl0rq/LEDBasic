@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+#include "Palettes.h"
+
 // Factory defaults match the GLEDOPTO Elite 6D-EXMU data output.
 // GPIO12 is a flash-voltage strap; it is safe as a data pin only after boot.
 static const int kDataPins[] = {16, 14, 13, 12, 4, 2};
@@ -18,6 +20,7 @@ static const int kDefaultMaster = 255;
 static const char* kDefaultType = "ws2812";
 static const char* kDefaultOrder = "GRB";
 static const char* kDefaultProgram = "Rainbow";
+static const char* kDefaultPalette = "Rainbow";
 static const int kMaxLeds = 1024;
 static const int kButtonPin = 17;
 // Elite 6D-EXMU energy-saving relay. WLED "Invert" means high connects input V+ to the outputs.
@@ -35,6 +38,7 @@ struct DeviceConfig {
     int pin;
     int brightness;
     int master;
+    String palette;
     String activeProgram;
 };
 

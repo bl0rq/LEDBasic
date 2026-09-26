@@ -97,6 +97,8 @@ public:
 
     bool setParameter(const std::string& name, float value);
     void setMasterBrightness(int value);
+    void setPalette(int index);
+    int palette() const;
     EvalResult evalImmediate(const std::string& text);
 
     Snapshot snapshot() const;
@@ -146,6 +148,7 @@ private:
     unsigned frameDtMs_ = kDefaultFrameDtMs;
     float speedMul_ = 1.0f;
     uint8_t master_ = 255;
+    int palette_ = 0;
     std::set<int> breakpoints_;
     std::vector<std::pair<std::string, float>> pendingParams_;
     Snapshot lastSnap_;

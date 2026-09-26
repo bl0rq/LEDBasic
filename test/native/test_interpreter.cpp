@@ -1,4 +1,5 @@
 #include "BasicInterpreter.h"
+#include "Palettes.h"
 #include "BasicExamples/Rainbow.h"
 #include "BasicExamples/PulsingCenter.h"
 #include "BasicExamples/BikeRolling.h"
@@ -15,6 +16,40 @@ static int gPass = 0;
     if (cond) { gPass++; } \
     else { gFails++; std::printf("FAIL: %s\n", msg); } \
 } while (0)
+
+static void testPalettes() {
+    int rainbow = findPalette("Rainbow");
+    int heat = findPalette("Heat");
+    CHECK(rainbow == 0, "Rainbow is the default palette");
+    CHECK(heat > 0, "Heat palette exists");
+    CHECK(paletteWraps(rainbow), "Rainbow wraps");
+    CHECK(!paletteWraps(heat), "Heat does not wrap");
+
+    PaletteRgb red = paletteColor(rainbow, 0, 255);
+    CHECK(red.r == 255 && red.g == 0 && red.b == 0, "Rainbow index 0 is red");
+    PaletteRgb wrapped = paletteColor(rainbow, 255, 255);
+    CHECK(wrapped.r > 240 && wrapped.g < 16 && wrapped.b < 16, "Rainbow index 255 wraps toward red");
+
+    PaletteRgb cold = paletteColor(heat, 0, 255);
+    PaletteRgb hot = paletteColor(heat, 255, 255);
+    CHECK(cold.r == 0 && cold.g == 0 && cold.b == 0, "Heat index 0 is black");
+    CHECK(hot.r == 255 && hot.g == 255 && hot.b == 255, "Heat index 255 is white");
+
+    PaletteRgb mid = paletteColor(heat, 8, 255);
+    CHECK(mid.r > cold.r && mid.r < 0x33, "Heat midpoint blends the first two entries");
+
+    CRGB leds[8];
+    BasicLEDController c(leds, 8);
+    c.setPalette(heat);
+    CHECK(c.loadProgram(String(
+        "setup\n  brightness(255)\nend\n"
+        "loop(time)\n  setpal(0, 0)\n  setpal(1, 255)\n  show()\nend\n")),
+        "setpal program loads");
+    c.runSetup();
+    c.runLoop(0);
+    CHECK(leds[0].r == 0 && leds[0].g == 0 && leds[0].b == 0, "setpal cold pixel");
+    CHECK(leds[1].r == 255 && leds[1].g == 255 && leds[1].b == 255, "setpal hot pixel");
+}
 
 static void testParams() {
     CRGB leds[10];
@@ -401,6 +436,7 @@ static void testInterruptStopsLoop() {
 }
 
 int main() {
+    testPalettes();
     testParams();
     testParseFail();
     testReload();

@@ -86,6 +86,7 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); }
 <canvas id=strip width=640 height=28 aria-label="LED preview"></canvas>
 <label class=spread>Brightness <span id=bright-read class=muted>255</span></label>
 <input id=bright type=range min=0 max=255 step=1 value=255>
+<label class=spread>Palette <select id=palette></select></label>
 <h2>Status</h2>
 <p id=link class=muted>Connecting…</p>
 <p id=runline></p>
@@ -184,6 +185,33 @@ bright.addEventListener("pointercancel", function () { brightDown = false; brigh
 bright.addEventListener("input", queueBright);
 bright.addEventListener("change", queueBright);
 
+var palette = document.getElementById("palette");
+var paletteReady = false;
+function loadPalette() {
+  return fetch("/api/palette").then(function (response) { return response.json(); }).then(function (data) {
+    var current = data.palette || "";
+    palette.textContent = "";
+    (data.palettes || []).forEach(function (name) {
+      var option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      if (name === current) option.selected = true;
+      palette.appendChild(option);
+    });
+    paletteReady = true;
+  });
+}
+palette.addEventListener("change", function () {
+  fetch("/api/palette", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ palette: palette.value })
+  }).then(function (response) { return response.json(); }).then(function (data) {
+    if (!data.ok) showError(data.error || "could not set palette");
+    else showError("");
+  }).catch(function () { showError("could not set palette"); });
+});
+
 function themeNow() {
   var set = document.documentElement.getAttribute("data-theme");
   if (set === "light" || set === "dark") return set;
@@ -245,6 +273,9 @@ function paintStatus(data) {
   if (!brightHold && data.brightness != null) {
     bright.value = data.brightness;
     brightRead.textContent = String(data.brightness);
+  }
+  if (paletteReady && data.palette && document.activeElement !== palette) {
+    palette.value = data.palette;
   }
   var shown = (data.unsaved ? "unsaved:" : "saved:") + (data.program || "");
   if (shown !== paramProgram) {
@@ -529,6 +560,7 @@ function refreshPreview() {
   fetch("/api/preview").then(function (r) { return r.json(); }).then(draw).catch(function () {});
 }
 loadLeds().catch(function () {});
+loadPalette().catch(function () {});
 loadPrograms().catch(function () {});
 refresh();
 refreshPreview();

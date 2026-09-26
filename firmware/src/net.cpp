@@ -335,6 +335,7 @@ static void handleStatus() {
     doc["builtin"] = gRunningBuiltin;
     doc["unsaved"] = gRunningUnsaved;
     doc["brightness"] = outputMaster();
+    doc["palette"] = outputPaletteName();
     doc["fps"] = outputFps();
     addRuntimeError(doc.as<JsonObject>());
     String body;
@@ -409,6 +410,38 @@ static void rememberMaster(int value) {
     gCfg->brightness = value;
     outputSetBrightness(value);
     gMasterSaveAt = millis() + 400;
+}
+
+static void handlePaletteGet() {
+    JsonDocument doc;
+    doc["palette"] = outputPaletteName();
+    JsonArray names = doc["palettes"].to<JsonArray>();
+    for (int i = 0; i < paletteCount(); i++) names.add(paletteName(i));
+    String body;
+    serializeJson(doc, body);
+    sendJson(200, body);
+}
+
+static void handlePalettePost() {
+    String name;
+    if (asJson()) {
+        JsonDocument doc;
+        if (deserializeJson(doc, gServer.arg("plain"))) {
+            sendError(400, "invalid json", nullptr);
+            return;
+        }
+        name = doc["palette"].as<String>();
+    } else if (gServer.hasArg("palette")) {
+        name = gServer.arg("palette");
+    }
+    if (findPalette(name.c_str()) < 0) {
+        sendError(400, "invalid palette", nullptr);
+        return;
+    }
+    gCfg->palette = name;
+    outputSetPalette(name.c_str());
+    saveConfig(*gCfg);
+    sendOk();
 }
 
 static void handleBrightnessGet() {
@@ -858,6 +891,9 @@ static void registerRoutes() {
 
     gServer.on("/api/status", HTTP_GET, handleStatus);
     gServer.on("/api/preview", HTTP_GET, handlePreview);
+    gServer.on("/api/palette", HTTP_GET, handlePaletteGet);
+    gServer.on("/api/palette", HTTP_POST, handlePalettePost);
+    gServer.on("/api/palette", HTTP_PUT, handlePalettePost);
     gServer.on("/api/brightness", HTTP_GET, handleBrightnessGet);
     gServer.on("/api/brightness", HTTP_POST, handleBrightnessPost);
     gServer.on("/api/brightness", HTTP_PUT, handleBrightnessPost);
