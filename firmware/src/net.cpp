@@ -852,15 +852,29 @@ static void handleWifiGet() {
     sendJson(200, body);
 }
 
-static int scanNetworks() {
-    if (WiFi.getMode() == WIFI_AP) WiFi.mode(WIFI_AP_STA);
-    return WiFi.scanNetworks();
-}
+static bool gScanRunning = false;
 
+// Wi-Fi scans block for 1-3s. Run them asynchronously so the main loop (and
+// LED rendering) keeps running; the client polls this endpoint until "done".
 static void handleWifiScan() {
-    int count = scanNetworks();
+    if (!gScanRunning) {
+        if (WiFi.getMode() == WIFI_AP) WiFi.mode(WIFI_AP_STA);
+        WiFi.scanNetworks(true);
+        gScanRunning = true;
+    }
+    int count = WiFi.scanComplete();
+    if (count == WIFI_SCAN_RUNNING) {
+        JsonDocument doc;
+        doc["done"] = false;
+        String body;
+        serializeJson(doc, body);
+        sendJson(200, body);
+        return;
+    }
+    gScanRunning = false;
     JsonDocument doc;
-    JsonArray arr = doc.to<JsonArray>();
+    doc["done"] = true;
+    JsonArray arr = doc["networks"].to<JsonArray>();
     for (int i = 0; i < count; i++) {
         JsonObject item = arr.add<JsonObject>();
         item["ssid"] = WiFi.SSID(i);

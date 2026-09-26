@@ -546,14 +546,16 @@ document.getElementById("join").addEventListener("submit", function (event) {
   });
 });
 
-document.getElementById("scan").addEventListener("click", function () {
-  var button = document.getElementById("scan");
-  var box = document.getElementById("networks");
-  button.disabled = true;
-  button.textContent = "Scanning…";
-  fetch("/api/wifi/scan").then(function (r) { return r.json(); }).then(function (list) {
+function pollScan(button, box) {
+  fetch("/api/wifi/scan").then(function (r) { return r.json(); }).then(function (result) {
+    if (!result.done) {
+      setTimeout(function () { pollScan(button, box); }, 400);
+      return;
+    }
+    button.disabled = false;
+    button.textContent = "Scan networks";
     box.textContent = "";
-    list.forEach(function (item) {
+    (result.networks || []).forEach(function (item) {
       if (!item.ssid) return;
       var form = document.createElement("form");
       form.className = "row";
@@ -588,11 +590,18 @@ document.getElementById("scan").addEventListener("click", function () {
       box.appendChild(empty);
     }
   }).catch(function () {
-    showError("scan failed");
-  }).then(function () {
     button.disabled = false;
     button.textContent = "Scan networks";
+    showError("scan failed");
   });
+}
+
+document.getElementById("scan").addEventListener("click", function () {
+  var button = document.getElementById("scan");
+  var box = document.getElementById("networks");
+  button.disabled = true;
+  button.textContent = "Scanning…";
+  pollScan(button, box);
 });
 
 document.getElementById("upload").addEventListener("submit", function (event) {
