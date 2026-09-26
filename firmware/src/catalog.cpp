@@ -52,6 +52,7 @@
 #include "BasicExamples/SineWave.h"
 #include "BasicExamples/Sinelon.h"
 #include "BasicExamples/Sparkle.h"
+#include "BasicExamples/SplitRainbow.h"
 #include "BasicExamples/Spots.h"
 #include "BasicExamples/Strobe.h"
 #include "BasicExamples/Sunrise.h"
@@ -121,6 +122,7 @@ static const BuiltinProgram kBuiltins[] = {
     {"SineWave", SineWave::program},
     {"Sinelon", Sinelon::program},
     {"Sparkle", Sparkle::program},
+    {"SplitRainbow", SplitRainbow::program},
     {"Spots", Spots::program},
     {"Strobe", Strobe::program},
     {"Sunrise", Sunrise::program},
