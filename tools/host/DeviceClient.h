@@ -17,6 +17,7 @@ struct DeviceStatus {
     std::string mode;
     std::string program;
     bool unsaved = false;
+    int master = 255;
     std::string fault;
     std::string message;
 };
@@ -53,6 +54,7 @@ public:
     bool programSource(const std::string& name, std::string& out, std::string& error) const;
     bool led(DeviceLed& out, std::string& error) const;
     HttpResult putLed(const DeviceLed& led) const;
+    HttpResult setBrightness(int brightness) const;
 };
 
 std::string deviceUrlPath();

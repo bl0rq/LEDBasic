@@ -240,6 +240,7 @@ DeviceStatus DeviceClient::status() const {
     out.mode = jsonString(http.body, "mode");
     out.program = jsonString(http.body, "program");
     out.unsaved = jsonBool(http.body, "unsaved");
+    out.master = jsonInt(http.body, "brightness", 255);
     out.fault = firstDiagnostic(http.body);
     if (out.fault.empty()) {
         size_t err = http.body.find("\"error\"");
@@ -322,6 +323,14 @@ bool DeviceClient::led(DeviceLed& out, std::string& error) const {
     out.pin = jsonInt(http.body, "pin", out.pin);
     out.brightness = jsonInt(http.body, "brightness", out.brightness);
     return true;
+}
+
+HttpResult DeviceClient::setBrightness(int brightness) const {
+    if (brightness < 0) brightness = 0;
+    if (brightness > 255) brightness = 255;
+    std::ostringstream body;
+    body << "{\"brightness\":" << brightness << "}";
+    return request("POST", "/api/brightness", body.str(), "application/json");
 }
 
 HttpResult DeviceClient::putLed(const DeviceLed& led) const {

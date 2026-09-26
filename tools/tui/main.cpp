@@ -80,7 +80,7 @@ static Element renderStripCells(const ledbasic::Snapshot& snap, int width) {
     int n = (int)snap.leds.size();
     Elements cells;
     cells.reserve((size_t)n);
-    float scale = snap.brightness / 255.0f;
+    float scale = (snap.brightness / 255.0f) * (snap.master / 255.0f);
     for (int i = 0; i < n; i++) {
         int r = (int)(snap.leds[(size_t)i].r * scale);
         int g = (int)(snap.leds[(size_t)i].g * scale);
@@ -833,6 +833,7 @@ int main(int argc, char** argv) {
                 text(" F4 Immediate    Ctrl+O Open   Ctrl+S Save   Ctrl+N New"),
                 text(" Click a line to move the caret; click the gutter for a breakpoint"),
                 text(" Immediate: ? x   x = 3   RUN   STOP"),
+                text(" Brightness slider scales the strip, and the board when connected"),
             });
         }),
         menuBtn(" Close ", [&] { showHelp = false; }),
@@ -841,8 +842,22 @@ int main(int argc, char** argv) {
         return e | border | bgcolor(theme::chrome()) | size(WIDTH, EQUAL, 70) | center;
     });
 
+    int brightnessValue = 255;
+    std::atomic<int> deviceBrightTarget{-1};
+    SliderOption<int> brightOpt;
+    brightOpt.value = &brightnessValue;
+    brightOpt.min = 0;
+    brightOpt.max = 255;
+    brightOpt.increment = 1;
+    brightOpt.on_change = [&] {
+        session.setMasterBrightness(brightnessValue);
+        if (!device.baseUrl.empty()) deviceBrightTarget.store(brightnessValue);
+    };
+    auto brightnessSlider = Slider(brightOpt);
+
     auto workspace = Container::Vertical({
         menuBar,
+        brightnessSlider,
         editor,
         paramsFocus,
         immediateInput,
@@ -933,8 +948,36 @@ int main(int argc, char** argv) {
                       " %d LEDs   brightness %u   t=%lums   %.2fx   %s ",
                       (int)snap.leds.size(), (unsigned)snap.brightness, snap.timeMs,
                       speed, stateLabel(snap.state));
+        int pendingBright = deviceBrightTarget.exchange(-1);
+        if (pendingBright >= 0) {
+            bool busy;
+            {
+                std::lock_guard<std::mutex> lock(deviceMu);
+                busy = deviceBusy;
+            }
+            if (busy) {
+                int empty = -1;
+                deviceBrightTarget.compare_exchange_strong(empty, pendingBright);
+            } else {
+                startDeviceJob([&, pendingBright] {
+                    int send = pendingBright;
+                    for (;;) {
+                        ledbasic::HttpResult result = device.setBrightness(send);
+                        if (!(result.transportOk && result.status >= 200 && result.status < 300) &&
+                            result.error.find("requires Windows") == std::string::npos) {
+                            deviceNote(ledbasic::deviceResultMessage(result));
+                        }
+                        int next = deviceBrightTarget.exchange(-1);
+                        if (next < 0 || next == send) return;
+                        send = next;
+                    }
+                });
+            }
+        }
+
         Element strip = vbox(Elements{
             text(stripHead) | color(theme::accent()),
+            brightnessSlider->Render(),
             renderStripCells(snap, 80),
         });
 
