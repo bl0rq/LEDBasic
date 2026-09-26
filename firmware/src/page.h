@@ -325,7 +325,6 @@ function loadPrograms() {
 }
 
 var paramProgram = "";
-var paramTimer = null;
 
 function formatNum(value) {
   var number = Number(value);
@@ -396,15 +395,24 @@ function paramControl(param) {
   range.step = param.step || 1;
   range.value = param.value;
   readout.textContent = formatNum(param.value);
-  range.addEventListener("input", function () {
+  var lane = { busy: false, want: null, sent: Number(param.value) };
+  function flushRange() {
+    if (lane.busy || lane.want == null || lane.want === lane.sent) return;
+    var value = lane.want;
+    lane.busy = true;
+    setParam(param.name, value).then(function () {
+      lane.sent = value;
+      lane.busy = false;
+      flushRange();
+    });
+  }
+  function queueRange() {
     readout.textContent = formatNum(range.value);
-    clearTimeout(paramTimer);
-    paramTimer = setTimeout(function () { setParam(param.name, Number(range.value)); }, 120);
-  });
-  range.addEventListener("change", function () {
-    clearTimeout(paramTimer);
-    setParam(param.name, Number(range.value));
-  });
+    lane.want = Number(range.value);
+    flushRange();
+  }
+  range.addEventListener("input", queueRange);
+  range.addEventListener("change", queueRange);
   wrap.appendChild(range);
   return wrap;
 }
