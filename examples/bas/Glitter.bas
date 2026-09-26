@@ -1,3 +1,5 @@
+# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
 param hue number(200.0, 0.0, 360.0, 5.0)
 
 setup

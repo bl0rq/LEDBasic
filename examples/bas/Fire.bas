@@ -1,3 +1,5 @@
+# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
 param cooling number(40.0, 5.0, 80.0, 5.0)
 param spark number(200.0, 40.0, 255.0, 5.0)
 

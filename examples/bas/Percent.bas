@@ -1,3 +1,5 @@
+# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
 param level number(65.0, 0.0, 100.0, 5.0)
 param hue number(130.0, 0.0, 360.0, 5.0)
 

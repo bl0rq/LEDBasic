@@ -1,3 +1,5 @@
+# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
 param hold number(600.0, 80.0, 3000.0, 40.0)
 
 setup

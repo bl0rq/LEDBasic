@@ -1,3 +1,5 @@
+# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
 param speed number(60.0, 10.0, 240.0, 5.0)
 param scale number(0.25, 0.05, 0.8, 0.05)
 

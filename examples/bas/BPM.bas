@@ -1,3 +1,5 @@
+# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
 param tempo number(480.0, 200.0, 1000.0, 20.0)
 
 setup

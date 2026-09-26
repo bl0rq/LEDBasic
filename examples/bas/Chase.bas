@@ -1,3 +1,5 @@
+# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
 param speed number(40.0, 8.0, 200.0, 4.0)
 param width number(6.0, 1.0, 24.0, 1.0)
 param hue number(15.0, 0.0, 360.0, 5.0)

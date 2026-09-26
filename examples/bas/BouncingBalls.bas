@@ -1,3 +1,5 @@
+# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
 param gravity number(0.18, 0.04, 0.6, 0.02)
 param bounce number(0.86, 0.4, 1.0, 0.02)
 

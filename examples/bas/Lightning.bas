@@ -1,3 +1,5 @@
+# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
 param gap number(500.0, 80.0, 2000.0, 20.0)
 
 setup

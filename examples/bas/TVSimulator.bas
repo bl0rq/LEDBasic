@@ -1,3 +1,5 @@
+# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
 param speed number(120.0, 30.0, 500.0, 10.0)
 
 setup

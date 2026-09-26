@@ -1,3 +1,5 @@
+# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
 param drift number(80.0, 10.0, 400.0, 10.0)
 param brightness_level number(255.0, 10.0, 255.0, 5.0)
 
