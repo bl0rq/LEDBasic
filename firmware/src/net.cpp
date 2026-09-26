@@ -23,6 +23,7 @@ static String gApSsid;
 static uint32_t gStaStarted = 0;
 static uint32_t gRestartAt = 0;
 static uint32_t gMasterSaveAt = 0;
+static uint32_t gMeasureSaveAt = 0;
 
 enum WifiPhase { PhaseAp, PhaseConnecting, PhaseSta, PhaseFallback };
 static WifiPhase gPhase = PhaseAp;
@@ -379,6 +380,7 @@ static void handleMeasure() {
             gCfg->measureEnd = clampMeasure(gCfg->length);
             gCfg->measuring = true;
         }
+        gMeasureSaveAt = 0;
         saveConfig(*gCfg);
         sendRestarting();
         return;
@@ -389,7 +391,7 @@ static void handleMeasure() {
     }
     if (action == "move") {
         gCfg->measureEnd = clampMeasure(gCfg->measureEnd + by);
-        saveConfig(*gCfg);
+        gMeasureSaveAt = millis() + 400;
         JsonDocument doc;
         doc["ok"] = true;
         doc["end"] = gCfg->measureEnd;
@@ -401,6 +403,7 @@ static void handleMeasure() {
     if (action == "save") {
         gCfg->length = gCfg->measureEnd;
         gCfg->measuring = false;
+        gMeasureSaveAt = 0;
         saveConfig(*gCfg);
         JsonDocument doc;
         doc["ok"] = true;
@@ -414,6 +417,7 @@ static void handleMeasure() {
     }
     if (action == "cancel") {
         gCfg->measuring = false;
+        gMeasureSaveAt = 0;
         saveConfig(*gCfg);
         sendRestarting();
         return;
@@ -1042,6 +1046,10 @@ void netLoop() {
     if (!gCfg) return;
     if (gMasterSaveAt != 0 && (int32_t)(millis() - gMasterSaveAt) >= 0) {
         gMasterSaveAt = 0;
+        saveConfig(*gCfg);
+    }
+    if (gMeasureSaveAt != 0 && (int32_t)(millis() - gMeasureSaveAt) >= 0) {
+        gMeasureSaveAt = 0;
         saveConfig(*gCfg);
     }
     pollButton();
