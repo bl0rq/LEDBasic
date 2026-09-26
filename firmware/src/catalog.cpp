@@ -2,16 +2,68 @@
 
 #include <LittleFS.h>
 
+#include "BasicExamples/Aurora.h"
+#include "BasicExamples/BPM.h"
 #include "BasicExamples/BackgroundStars.h"
 #include "BasicExamples/BikeParked.h"
 #include "BasicExamples/BikeRolling.h"
+#include "BasicExamples/Blink.h"
+#include "BasicExamples/BouncingBalls.h"
 #include "BasicExamples/Breathing.h"
+#include "BasicExamples/Candle.h"
+#include "BasicExamples/Chase.h"
+#include "BasicExamples/Colorloop.h"
+#include "BasicExamples/Colorwaves.h"
+#include "BasicExamples/Dissolve.h"
 #include "BasicExamples/DoubleRainbow.h"
+#include "BasicExamples/Drip.h"
+#include "BasicExamples/Fade.h"
+#include "BasicExamples/Fairy.h"
+#include "BasicExamples/Fire.h"
+#include "BasicExamples/FireFlicker.h"
+#include "BasicExamples/Fireworks.h"
+#include "BasicExamples/Flow.h"
+#include "BasicExamples/Glitter.h"
+#include "BasicExamples/Gradient.h"
+#include "BasicExamples/HalloweenEyes.h"
+#include "BasicExamples/Heartbeat.h"
+#include "BasicExamples/ICU.h"
+#include "BasicExamples/Juggle.h"
+#include "BasicExamples/Lightning.h"
+#include "BasicExamples/Loading.h"
 #include "BasicExamples/Matrix.h"
 #include "BasicExamples/MovingComets.h"
+#include "BasicExamples/Oscillate.h"
+#include "BasicExamples/Pacifica.h"
+#include "BasicExamples/Percent.h"
+#include "BasicExamples/Phased.h"
+#include "BasicExamples/Plasma.h"
+#include "BasicExamples/Popcorn.h"
+#include "BasicExamples/Pride.h"
 #include "BasicExamples/PulsingCenter.h"
+#include "BasicExamples/Railway.h"
 #include "BasicExamples/Rainbow.h"
+#include "BasicExamples/RandomColors.h"
+#include "BasicExamples/Ripple.h"
+#include "BasicExamples/Running.h"
+#include "BasicExamples/Saw.h"
+#include "BasicExamples/Scan.h"
+#include "BasicExamples/Shimmer.h"
 #include "BasicExamples/SineWave.h"
+#include "BasicExamples/Sinelon.h"
+#include "BasicExamples/Sparkle.h"
+#include "BasicExamples/Spots.h"
+#include "BasicExamples/Strobe.h"
+#include "BasicExamples/Sunrise.h"
+#include "BasicExamples/Sweep.h"
+#include "BasicExamples/TVSimulator.h"
+#include "BasicExamples/Theater.h"
+#include "BasicExamples/TrafficLight.h"
+#include "BasicExamples/TriChase.h"
+#include "BasicExamples/Twinkle.h"
+#include "BasicExamples/TwoDots.h"
+#include "BasicExamples/WashingMachine.h"
+#include "BasicExamples/Wipe.h"
 
 struct BuiltinProgram {
     const char* name;
@@ -19,16 +71,68 @@ struct BuiltinProgram {
 };
 
 static const BuiltinProgram kBuiltins[] = {
-    {"Rainbow", Rainbow::program},
-    {"Breathing", Breathing::program},
-    {"SineWave", SineWave::program},
-    {"DoubleRainbow", DoubleRainbow::program},
-    {"Matrix", Matrix::program},
+    {"Aurora", Aurora::program},
+    {"BPM", BPM::program},
     {"BackgroundStars", BackgroundStars::program},
-    {"MovingComets", MovingComets::program},
-    {"PulsingCenter", PulsingCenter::program},
     {"BikeParked", BikeParked::program},
     {"BikeRolling", BikeRolling::program},
+    {"Blink", Blink::program},
+    {"BouncingBalls", BouncingBalls::program},
+    {"Breathing", Breathing::program},
+    {"Candle", Candle::program},
+    {"Chase", Chase::program},
+    {"Colorloop", Colorloop::program},
+    {"Colorwaves", Colorwaves::program},
+    {"Dissolve", Dissolve::program},
+    {"DoubleRainbow", DoubleRainbow::program},
+    {"Drip", Drip::program},
+    {"Fade", Fade::program},
+    {"Fairy", Fairy::program},
+    {"Fire", Fire::program},
+    {"FireFlicker", FireFlicker::program},
+    {"Fireworks", Fireworks::program},
+    {"Flow", Flow::program},
+    {"Glitter", Glitter::program},
+    {"Gradient", Gradient::program},
+    {"HalloweenEyes", HalloweenEyes::program},
+    {"Heartbeat", Heartbeat::program},
+    {"ICU", ICU::program},
+    {"Juggle", Juggle::program},
+    {"Lightning", Lightning::program},
+    {"Loading", Loading::program},
+    {"Matrix", Matrix::program},
+    {"MovingComets", MovingComets::program},
+    {"Oscillate", Oscillate::program},
+    {"Pacifica", Pacifica::program},
+    {"Percent", Percent::program},
+    {"Phased", Phased::program},
+    {"Plasma", Plasma::program},
+    {"Popcorn", Popcorn::program},
+    {"Pride", Pride::program},
+    {"PulsingCenter", PulsingCenter::program},
+    {"Railway", Railway::program},
+    {"Rainbow", Rainbow::program},
+    {"RandomColors", RandomColors::program},
+    {"Ripple", Ripple::program},
+    {"Running", Running::program},
+    {"Saw", Saw::program},
+    {"Scan", Scan::program},
+    {"Shimmer", Shimmer::program},
+    {"SineWave", SineWave::program},
+    {"Sinelon", Sinelon::program},
+    {"Sparkle", Sparkle::program},
+    {"Spots", Spots::program},
+    {"Strobe", Strobe::program},
+    {"Sunrise", Sunrise::program},
+    {"Sweep", Sweep::program},
+    {"TVSimulator", TVSimulator::program},
+    {"Theater", Theater::program},
+    {"TrafficLight", TrafficLight::program},
+    {"TriChase", TriChase::program},
+    {"Twinkle", Twinkle::program},
+    {"TwoDots", TwoDots::program},
+    {"WashingMachine", WashingMachine::program},
+    {"Wipe", Wipe::program},
 };
 
 static const int kBuiltinCount = (int)(sizeof(kBuiltins) / sizeof(kBuiltins[0]));
