@@ -93,9 +93,19 @@ std::string firstDiagnostic(const std::string& json) {
     return std::to_string(line) + ":" + std::to_string(column) + " " + message;
 }
 
+// Keep this list in sync with the firmware's builtin catalog
+// (firmware/src/catalog.cpp kBuiltins).
 const char* kBuiltins[] = {
-    "Rainbow", "Breathing", "SineWave", "DoubleRainbow", "Matrix",
-    "BackgroundStars", "MovingComets", "PulsingCenter", "BikeParked", "BikeRolling",
+    "Aurora", "BPM", "BackgroundStars", "BikeParked", "BikeRolling", "Blink",
+    "BouncingBalls", "Breathing", "Candle", "Chase", "Colorloop", "Colorwaves",
+    "Dissolve", "DoubleRainbow", "Drip", "Fade", "Fairy", "Fire", "FireFlicker",
+    "Fireworks", "Flow", "Glitter", "Gradient", "HalloweenEyes", "Heartbeat",
+    "ICU", "Juggle", "Lightning", "Loading", "Matrix", "MovingComets",
+    "Oscillate", "Pacifica", "Percent", "Phased", "Plasma", "Popcorn", "Pride",
+    "PulsingCenter", "Railway", "Rainbow", "RandomColors", "Ripple", "Running",
+    "Saw", "Scan", "Shimmer", "SineWave", "Sinelon", "Sparkle", "SplitRainbow",
+    "Spots", "Strobe", "Sunrise", "Sweep", "TVSimulator", "Theater",
+    "TrafficLight", "TriChase", "Twinkle", "TwoDots", "WashingMachine", "Wipe",
 };
 
 #ifdef _WIN32
