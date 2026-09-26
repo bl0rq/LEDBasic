@@ -989,7 +989,7 @@ static bool isDebuggableStatement(NodeType t) {
 
 BasicInterpreter::BasicInterpreter(CRGB* ledArray, int ledCount)
     : leds(ledArray), numLeds(ledCount), showCalled(false), ownsPhysicalOutput(true),
-      autoShow(true), outputBrightness(255), setupNode(nullptr), loopNode(nullptr),
+      autoShow(true), outputBrightness(255), masterBrightness(255), setupNode(nullptr), loopNode(nullptr),
       abortExecution(false), currentLine(0), currentColumn(0), statementDepth(0),
       millisFn(ledbasicDefaultMillis), delayFn(ledbasicDefaultDelay), clockUser(nullptr),
       debugHook(nullptr), debugHookUser(nullptr) {
@@ -1631,9 +1631,7 @@ Value BasicInterpreter::callLedFunction(TokenType func, const std::vector<Value>
         case TOK_BRIGHTNESS: {
             if (args.size() >= 1) {
                 outputBrightness = (uint8_t)constrain((int)args[0].asNumber(), 0, 255);
-                if (ownsPhysicalOutput) {
-                    FastLED.setBrightness(outputBrightness);
-                }
+                applyPhysicalBrightness();
             }
             break;
         }
@@ -1754,6 +1752,18 @@ bool BasicInterpreter::evalSnippet(const String& source, Value& result, Diagnost
 // =============================================================================
 // Parameter Management Implementation
 // =============================================================================
+
+void BasicInterpreter::setMasterBrightness(uint8_t value) {
+    masterBrightness.store(value, std::memory_order_relaxed);
+    applyPhysicalBrightness();
+}
+
+void BasicInterpreter::applyPhysicalBrightness() {
+    if (!ownsPhysicalOutput) return;
+    uint8_t master = masterBrightness.load(std::memory_order_relaxed);
+    uint8_t scaled = (uint8_t)(((uint16_t)outputBrightness * master) / 255);
+    FastLED.setBrightness(scaled);
+}
 
 void BasicInterpreter::addParameter(const Parameter& param) {
     parameters[param.name] = param;
@@ -2002,6 +2012,19 @@ uint8_t BasicLEDController::getOutputBrightness() const {
         return interpreter->getOutputBrightness();
     }
     return 255;
+}
+
+uint8_t BasicLEDController::getMasterBrightness() const {
+    if (interpreter) {
+        return interpreter->getMasterBrightness();
+    }
+    return 255;
+}
+
+void BasicLEDController::setMasterBrightness(uint8_t value) {
+    if (interpreter) {
+        interpreter->setMasterBrightness(value);
+    }
 }
 
 // =============================================================================

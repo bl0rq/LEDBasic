@@ -22,6 +22,7 @@ static bool gBusy = false;
 static String gApSsid;
 static uint32_t gStaStarted = 0;
 static uint32_t gRestartAt = 0;
+static uint32_t gMasterSaveAt = 0;
 
 enum WifiPhase { PhaseAp, PhaseConnecting, PhaseSta, PhaseFallback };
 static WifiPhase gPhase = PhaseAp;
@@ -333,7 +334,7 @@ static void handleStatus() {
     doc["program"] = gRunningName;
     doc["builtin"] = gRunningBuiltin;
     doc["unsaved"] = gRunningUnsaved;
-    doc["brightness"] = outputBrightness();
+    doc["brightness"] = outputMaster();
     doc["fps"] = outputFps();
     addRuntimeError(doc.as<JsonObject>());
     String body;
@@ -347,14 +348,15 @@ static void handleLedGet() {
     doc["order"] = gCfg->colorOrder;
     doc["length"] = gCfg->length;
     doc["pin"] = gCfg->pin;
-    doc["brightness"] = outputBrightness();
+    doc["brightness"] = outputMaster();
     String body;
     serializeJson(doc, body);
     sendJson(200, body);
 }
 
-static bool readLed(DeviceConfig& next, String& error) {
+static bool readLed(DeviceConfig& next, String& error, bool& hasBrightness) {
     next = *gCfg;
+    hasBrightness = false;
     if (asJson()) {
         JsonDocument doc;
         if (deserializeJson(doc, gServer.arg("plain"))) {
@@ -365,13 +367,19 @@ static bool readLed(DeviceConfig& next, String& error) {
         if (!doc["order"].isNull()) next.colorOrder = doc["order"].as<String>();
         if (!doc["length"].isNull()) next.length = doc["length"].as<int>();
         if (!doc["pin"].isNull()) next.pin = doc["pin"].as<int>();
-        if (!doc["brightness"].isNull()) next.brightness = doc["brightness"].as<int>();
+        if (!doc["brightness"].isNull()) {
+            next.brightness = doc["brightness"].as<int>();
+            hasBrightness = true;
+        }
     } else {
         if (gServer.hasArg("type")) next.ledType = gServer.arg("type");
         if (gServer.hasArg("order")) next.colorOrder = gServer.arg("order");
         if (gServer.hasArg("length")) next.length = gServer.arg("length").toInt();
         if (gServer.hasArg("pin")) next.pin = gServer.arg("pin").toInt();
-        if (gServer.hasArg("brightness")) next.brightness = gServer.arg("brightness").toInt();
+        if (gServer.hasArg("brightness")) {
+            next.brightness = gServer.arg("brightness").toInt();
+            hasBrightness = true;
+        }
     }
     if (!validLedType(next.ledType)) {
         error = "invalid led type";
@@ -396,19 +404,64 @@ static bool readLed(DeviceConfig& next, String& error) {
     return true;
 }
 
+static void rememberMaster(int value) {
+    gCfg->master = value;
+    gCfg->brightness = value;
+    outputSetBrightness(value);
+    gMasterSaveAt = millis() + 400;
+}
+
+static void handleBrightnessGet() {
+    JsonDocument doc;
+    doc["brightness"] = outputMaster();
+    String body;
+    serializeJson(doc, body);
+    sendJson(200, body);
+}
+
+static void handleBrightnessPost() {
+    int value = -1;
+    if (asJson()) {
+        JsonDocument doc;
+        if (deserializeJson(doc, gServer.arg("plain"))) {
+            sendError(400, "invalid json", nullptr);
+            return;
+        }
+        if (doc["brightness"].isNull()) {
+            sendError(400, "invalid brightness", nullptr);
+            return;
+        }
+        value = doc["brightness"].as<int>();
+    } else if (gServer.hasArg("brightness")) {
+        value = gServer.arg("brightness").toInt();
+    }
+    if (!validBrightness(value)) {
+        sendError(400, "invalid brightness", nullptr);
+        return;
+    }
+    rememberMaster(value);
+    sendOk();
+}
+
 static void handleLedPut() {
     DeviceConfig next;
     String error;
-    if (!readLed(next, error)) {
+    bool hasBrightness = false;
+    if (!readLed(next, error, hasBrightness)) {
         sendError(400, error.c_str(), nullptr);
         return;
     }
     bool hardware = next.ledType != gCfg->ledType || next.colorOrder != gCfg->colorOrder ||
                     next.length != gCfg->length || next.pin != gCfg->pin;
-    int brightness = next.brightness;
+    if (hasBrightness) {
+        next.master = next.brightness;
+        outputSetBrightness(next.brightness);
+    } else {
+        next.master = gCfg->master;
+    }
     *gCfg = next;
     saveConfig(*gCfg);
-    outputSetBrightness(brightness);
+    gMasterSaveAt = 0;
     if (hardware) {
         Serial.printf("LED %s %s pin %d x %d, restarting\n",
                       gCfg->ledType.c_str(), gCfg->colorOrder.c_str(), gCfg->pin, gCfg->length);
@@ -805,6 +858,9 @@ static void registerRoutes() {
 
     gServer.on("/api/status", HTTP_GET, handleStatus);
     gServer.on("/api/preview", HTTP_GET, handlePreview);
+    gServer.on("/api/brightness", HTTP_GET, handleBrightnessGet);
+    gServer.on("/api/brightness", HTTP_POST, handleBrightnessPost);
+    gServer.on("/api/brightness", HTTP_PUT, handleBrightnessPost);
     gServer.on("/api/led", HTTP_GET, handleLedGet);
     gServer.on("/api/led", HTTP_PUT, handleLedPut);
     gServer.on("/api/led", HTTP_POST, handleLedPut);
@@ -850,6 +906,10 @@ void netBegin(DeviceConfig& cfg) {
 
 void netLoop() {
     if (!gCfg) return;
+    if (gMasterSaveAt != 0 && (int32_t)(millis() - gMasterSaveAt) >= 0) {
+        gMasterSaveAt = 0;
+        saveConfig(*gCfg);
+    }
     pollButton();
     if (gPhase == PhaseConnecting) {
         if (WiFi.status() == WL_CONNECTED) {

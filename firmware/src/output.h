@@ -15,6 +15,7 @@ bool outputBegin(const String& ledType, const String& colorOrder, int length, in
 BasicLEDController* outputController();
 void outputSetBrightness(int brightness);
 int outputBrightness();
+int outputMaster();
 int outputFps();
 void outputNoteFrame();
 // Writes up to maxSamples RGB triples from the live strip. Returns the sample count.

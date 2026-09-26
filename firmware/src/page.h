@@ -84,6 +84,8 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); }
 <p id=error class="error hidden"></p>
 <p id=restart class=hidden>Restarting. Reconnect, then open this page again.</p>
 <canvas id=strip width=640 height=28 aria-label="LED preview"></canvas>
+<label class=spread>Brightness <span id=bright-read class=muted>255</span></label>
+<input id=bright type=range min=0 max=255 step=1 value=255>
 <h2>Status</h2>
 <p id=link class=muted>Connecting…</p>
 <p id=runline></p>
@@ -115,7 +117,6 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); }
     <option selected>16</option><option>14</option><option>13</option>
     <option>12</option><option>4</option><option>2</option>
   </select></label>
-  <label>Brightness <input name=brightness type=number min=0 max=255 value=128></label>
   <button type=submit class=primary>Save</button>
 </form>
 <h2>Programs</h2>
@@ -138,6 +139,50 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); }
 <script>
 var strip = document.getElementById("strip");
 var lastColors = [];
+var bright = document.getElementById("bright");
+var brightRead = document.getElementById("bright-read");
+var brightHold = false;
+var brightDown = false;
+var brightBusy = false;
+var brightWant = null;
+var brightSent = null;
+
+function brightSettled() {
+  if (!brightDown && !brightBusy && brightWant === brightSent) brightHold = false;
+}
+function flushBright() {
+  if (brightBusy || brightWant == null || brightWant === brightSent) {
+    brightSettled();
+    return;
+  }
+  var value = brightWant;
+  brightBusy = true;
+  fetch("/api/brightness", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ brightness: value })
+  }).then(function (response) { return response.json(); }).then(function (data) {
+    brightSent = value;
+    brightBusy = false;
+    if (!data.ok) showError(data.error || "could not set brightness");
+    flushBright();
+  }).catch(function () {
+    brightBusy = false;
+    showError("could not set brightness");
+    brightSettled();
+  });
+}
+function queueBright() {
+  brightHold = true;
+  brightRead.textContent = bright.value;
+  brightWant = Number(bright.value);
+  flushBright();
+}
+bright.addEventListener("pointerdown", function () { brightDown = true; brightHold = true; });
+bright.addEventListener("pointerup", function () { brightDown = false; brightSettled(); });
+bright.addEventListener("pointercancel", function () { brightDown = false; brightSettled(); });
+bright.addEventListener("input", queueBright);
+bright.addEventListener("change", queueBright);
 
 function themeNow() {
   var set = document.documentElement.getAttribute("data-theme");
@@ -197,6 +242,10 @@ function paintStatus(data) {
   var message = data.error && data.error.message ? data.error.message : "";
   fault.textContent = message;
   fault.classList.toggle("hidden", !message);
+  if (!brightHold && data.brightness != null) {
+    bright.value = data.brightness;
+    brightRead.textContent = String(data.brightness);
+  }
   var shown = (data.unsaved ? "unsaved:" : "saved:") + (data.program || "");
   if (shown !== paramProgram) {
     paramProgram = shown;
@@ -379,7 +428,7 @@ function loadParams() {
 function loadLeds() {
   return fetch("/api/led").then(function (r) { return r.json(); }).then(function (led) {
     var form = document.getElementById("leds");
-    ["type", "order", "length", "pin", "brightness"].forEach(function (key) {
+    ["type", "order", "length", "pin"].forEach(function (key) {
       if (led[key] != null && form.elements[key]) form.elements[key].value = String(led[key]);
     });
   });

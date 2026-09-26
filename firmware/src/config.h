@@ -14,6 +14,7 @@ static const int kColorOrderCount = 6;
 static const int kDefaultLength = 60;
 static const int kDefaultPin = 16;
 static const int kDefaultBrightness = 128;
+static const int kDefaultMaster = 255;
 static const char* kDefaultType = "ws2812";
 static const char* kDefaultOrder = "GRB";
 static const char* kDefaultProgram = "Rainbow";
@@ -33,6 +34,7 @@ struct DeviceConfig {
     int length;
     int pin;
     int brightness;
+    int master;
     String activeProgram;
 };
 

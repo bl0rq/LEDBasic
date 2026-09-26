@@ -413,6 +413,8 @@ private:
     bool ownsPhysicalOutput;
     bool autoShow;
     uint8_t outputBrightness;
+    std::atomic<uint8_t> masterBrightness;
+    void applyPhysicalBrightness();
     ASTNode* setupNode;
     ASTNode* loopNode;
     std::vector<Diagnostic> diagnostics;
@@ -484,6 +486,8 @@ public:
     void setAutoShow(bool enable) { autoShow = enable; }
     bool getAutoShow() const { return autoShow; }
     uint8_t getOutputBrightness() const { return outputBrightness; }
+    uint8_t getMasterBrightness() const { return masterBrightness.load(std::memory_order_relaxed); }
+    void setMasterBrightness(uint8_t value);
 
     // Parameter management
     void addParameter(const Parameter& param);
@@ -615,6 +619,8 @@ public:
     void setOwnsPhysicalOutput(bool owns);
     void setAutoShow(bool enable);
     uint8_t getOutputBrightness() const;
+    uint8_t getMasterBrightness() const;
+    void setMasterBrightness(uint8_t value);
 
     void addParameter(const Parameter& param);
     void setParameterValue(const String& name, const Value& value);

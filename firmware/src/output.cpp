@@ -13,6 +13,7 @@ static void setRelay(int brightness) {
 
 static CRGB* gLeds = nullptr;
 static int gLedCount = 0;
+static int gMaster = 255;
 static BasicLEDController* gController = nullptr;
 static fl::ChannelPtr gChannel;
 static String gGoodSource;
@@ -44,18 +45,16 @@ static void addStrip(const String& ledType, const String& colorOrder, int pin, C
 
 bool outputBegin(const String& ledType, const String& colorOrder, int length, int pin, int brightness) {
     gLedCount = length;
-    setRelay(brightness);
     gLeds = new CRGB[length];
     fill_solid(gLeds, length, CRGB::Black);
     addStrip(ledType, colorOrder, pin, gLeds, length);
-    FastLED.setBrightness((uint8_t)brightness);
-    setRelay(brightness);
-    FastLED.clear(true);
-    Serial.printf("Relay GPIO%d %s\n", kRelayPin, brightness > 0 ? "on" : "off");
     gController = new BasicLEDController(gLeds, length);
     gController->setOwnsPhysicalOutput(true);
     gController->setAutoShow(true);
     gController->setClock(netMillis, netDelay, nullptr);
+    outputSetBrightness(brightness);
+    FastLED.clear(true);
+    Serial.printf("Relay GPIO%d %s\n", kRelayPin, brightness > 0 ? "on" : "off");
     gFpsMark = millis();
     return gController != nullptr;
 }
@@ -65,12 +64,19 @@ BasicLEDController* outputController() {
 }
 
 void outputSetBrightness(int brightness) {
-    FastLED.setBrightness((uint8_t)brightness);
-    setRelay(brightness);
+    if (brightness < 0) brightness = 0;
+    if (brightness > 255) brightness = 255;
+    gMaster = brightness;
+    setRelay(gMaster);
+    if (gController) gController->setMasterBrightness((uint8_t)gMaster);
 }
 
 int outputBrightness() {
     return FastLED.getBrightness();
+}
+
+int outputMaster() {
+    return gMaster;
 }
 
 int outputFps() {

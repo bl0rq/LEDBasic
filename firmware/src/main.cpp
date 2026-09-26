@@ -32,7 +32,7 @@ void setup() {
                   gConfig.ledType.c_str(), gConfig.colorOrder.c_str(), gConfig.pin,
                   gConfig.length, gConfig.brightness, gConfig.activeProgram.c_str());
 
-    outputBegin(gConfig.ledType, gConfig.colorOrder, gConfig.length, gConfig.pin, gConfig.brightness);
+    outputBegin(gConfig.ledType, gConfig.colorOrder, gConfig.length, gConfig.pin, gConfig.master);
     netBegin(gConfig);
 
     ApplyResult boot = netApply(gConfig.activeProgram, source, true);
