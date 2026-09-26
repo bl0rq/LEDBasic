@@ -1,6 +1,3 @@
-# TrafficLight - copied from include/BasicExamples/TrafficLight.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(900.0, 200.0, 3000.0, 50.0)
 
 setup

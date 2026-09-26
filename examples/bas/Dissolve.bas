@@ -1,6 +1,3 @@
-# Dissolve - copied from include/BasicExamples/Dissolve.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(80.0, 20.0, 400.0, 10.0)
 param hue number(280.0, 0.0, 360.0, 5.0)
 

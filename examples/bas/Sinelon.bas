@@ -1,6 +1,3 @@
-# Sinelon - copied from include/BasicExamples/Sinelon.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(50.0, 10.0, 200.0, 5.0)
 param hue number(300.0, 0.0, 360.0, 5.0)
 

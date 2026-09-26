@@ -1,6 +1,3 @@
-# WashingMachine - copied from include/BasicExamples/WashingMachine.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(28.0, 6.0, 120.0, 2.0)
 
 setup

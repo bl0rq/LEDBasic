@@ -1,6 +1,3 @@
-# Heartbeat - copied from include/BasicExamples/Heartbeat.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(900.0, 300.0, 1800.0, 50.0)
 param hue number(0.0, 0.0, 360.0, 5.0)
 

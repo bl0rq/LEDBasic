@@ -1,6 +1,3 @@
-# FireFlicker - copied from include/BasicExamples/FireFlicker.h
-# Firmware header remains the source of truth for sketches.
-
 param hue number(18.0, 0.0, 60.0, 2.0)
 
 setup

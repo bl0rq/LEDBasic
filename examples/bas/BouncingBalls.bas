@@ -1,6 +1,3 @@
-# BouncingBalls - copied from include/BasicExamples/BouncingBalls.h
-# Firmware header remains the source of truth for sketches.
-
 param gravity number(0.18, 0.04, 0.6, 0.02)
 param bounce number(0.86, 0.4, 1.0, 0.02)
 

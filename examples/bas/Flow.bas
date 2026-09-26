@@ -1,6 +1,3 @@
-# Flow - copied from include/BasicExamples/Flow.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(30.0, 8.0, 160.0, 4.0)
 param zones number(4.0, 2.0, 8.0, 1.0)
 

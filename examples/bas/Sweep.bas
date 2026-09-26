@@ -1,6 +1,3 @@
-# Sweep - copied from include/BasicExamples/Sweep.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(25.0, 5.0, 120.0, 5.0)
 param hue number(200.0, 0.0, 360.0, 5.0)
 param hue2 number(30.0, 0.0, 360.0, 5.0)

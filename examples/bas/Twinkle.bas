@@ -1,6 +1,3 @@
-# Twinkle - copied from include/BasicExamples/Twinkle.h
-# Firmware header remains the source of truth for sketches.
-
 param rate number(40.0, 5.0, 200.0, 5.0)
 param hue number(45.0, 0.0, 360.0, 5.0)
 

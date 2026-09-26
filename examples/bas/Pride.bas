@@ -1,6 +1,3 @@
-# Pride - copied from include/BasicExamples/Pride.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(30.0, 6.0, 140.0, 2.0)
 
 setup

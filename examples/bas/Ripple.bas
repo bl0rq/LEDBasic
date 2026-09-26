@@ -1,6 +1,3 @@
-# Ripple - copied from include/BasicExamples/Ripple.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(36.0, 8.0, 160.0, 4.0)
 param hue number(190.0, 0.0, 360.0, 5.0)
 

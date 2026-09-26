@@ -1,6 +1,3 @@
-# Lightning - copied from include/BasicExamples/Lightning.h
-# Firmware header remains the source of truth for sketches.
-
 param gap number(500.0, 80.0, 2000.0, 20.0)
 
 setup

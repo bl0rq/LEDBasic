@@ -1,6 +1,3 @@
-# Gradient - copied from include/BasicExamples/Gradient.h
-# Firmware header remains the source of truth for sketches.
-
 param hue_a number(0.0, 0.0, 360.0, 5.0)
 param hue_b number(260.0, 0.0, 360.0, 5.0)
 param drift number(80.0, 10.0, 400.0, 10.0)

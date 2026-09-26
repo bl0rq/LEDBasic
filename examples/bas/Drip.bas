@@ -1,6 +1,3 @@
-# Drip - copied from include/BasicExamples/Drip.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(18.0, 4.0, 80.0, 2.0)
 param hue number(200.0, 0.0, 360.0, 5.0)
 

@@ -1,6 +1,3 @@
-# Aurora - copied from include/BasicExamples/Aurora.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(70.0, 15.0, 250.0, 5.0)
 
 setup

@@ -1,6 +1,3 @@
-# Shimmer - copied from include/BasicExamples/Shimmer.h
-# Firmware header remains the source of truth for sketches.
-
 param hue number(45.0, 0.0, 360.0, 5.0)
 param speed number(30.0, 5.0, 120.0, 5.0)
 

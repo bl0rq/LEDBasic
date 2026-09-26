@@ -1,6 +1,3 @@
-# ICU - copied from include/BasicExamples/ICU.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(26.0, 6.0, 100.0, 2.0)
 param hue number(120.0, 0.0, 360.0, 5.0)
 

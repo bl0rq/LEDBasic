@@ -1,6 +1,3 @@
-# TriChase - copied from include/BasicExamples/TriChase.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(35.0, 8.0, 160.0, 4.0)
 param size number(4.0, 1.0, 12.0, 1.0)
 

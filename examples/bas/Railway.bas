@@ -1,6 +1,3 @@
-# Railway - copied from include/BasicExamples/Railway.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(20.0, 4.0, 80.0, 2.0)
 
 setup

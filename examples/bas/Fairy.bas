@@ -1,6 +1,3 @@
-# Fairy - copied from include/BasicExamples/Fairy.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(200.0, 40.0, 800.0, 20.0)
 param hue number(300.0, 0.0, 360.0, 5.0)
 

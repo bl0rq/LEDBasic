@@ -1,6 +1,3 @@
-# Pacifica - copied from include/BasicExamples/Pacifica.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(50.0, 10.0, 200.0, 5.0)
 
 setup

@@ -1,6 +1,3 @@
-# Theater - copied from include/BasicExamples/Theater.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(90.0, 20.0, 400.0, 10.0)
 param gap number(3.0, 2.0, 8.0, 1.0)
 param hue number(280.0, 0.0, 360.0, 5.0)

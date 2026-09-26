@@ -1,6 +1,3 @@
-# Candle - copied from include/BasicExamples/Candle.h
-# Firmware header remains the source of truth for sketches.
-
 param hue number(25.0, 0.0, 50.0, 1.0)
 
 setup

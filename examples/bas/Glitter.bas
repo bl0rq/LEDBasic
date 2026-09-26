@@ -1,6 +1,3 @@
-# Glitter - copied from include/BasicExamples/Glitter.h
-# Firmware header remains the source of truth for sketches.
-
 param hue number(200.0, 0.0, 360.0, 5.0)
 
 setup

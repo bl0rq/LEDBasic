@@ -1,6 +1,3 @@
-# Sparkle - copied from include/BasicExamples/Sparkle.h
-# Firmware header remains the source of truth for sketches.
-
 param hue number(0.0, 0.0, 360.0, 5.0)
 param bg number(20.0, 0.0, 80.0, 5.0)
 

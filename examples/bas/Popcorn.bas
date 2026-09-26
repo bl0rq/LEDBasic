@@ -1,6 +1,3 @@
-# Popcorn - copied from include/BasicExamples/Popcorn.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(70.0, 20.0, 300.0, 10.0)
 param hue number(40.0, 0.0, 360.0, 5.0)
 

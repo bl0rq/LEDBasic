@@ -1,6 +1,3 @@
-# TVSimulator - copied from include/BasicExamples/TVSimulator.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(120.0, 30.0, 500.0, 10.0)
 
 setup

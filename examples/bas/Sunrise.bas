@@ -1,6 +1,3 @@
-# Sunrise - copied from include/BasicExamples/Sunrise.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(40.0, 8.0, 200.0, 4.0)
 param width number(12.0, 4.0, 40.0, 1.0)
 

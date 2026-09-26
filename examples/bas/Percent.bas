@@ -1,6 +1,3 @@
-# Percent - copied from include/BasicExamples/Percent.h
-# Firmware header remains the source of truth for sketches.
-
 param level number(65.0, 0.0, 100.0, 5.0)
 param hue number(130.0, 0.0, 360.0, 5.0)
 

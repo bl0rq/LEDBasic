@@ -1,6 +1,3 @@
-# Juggle - copied from include/BasicExamples/Juggle.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(40.0, 10.0, 160.0, 5.0)
 
 setup

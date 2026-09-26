@@ -1,6 +1,3 @@
-# RandomColors - copied from include/BasicExamples/RandomColors.h
-# Firmware header remains the source of truth for sketches.
-
 param hold number(600.0, 80.0, 3000.0, 40.0)
 
 setup

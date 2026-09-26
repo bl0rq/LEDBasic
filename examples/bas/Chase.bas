@@ -1,6 +1,3 @@
-# Chase - copied from include/BasicExamples/Chase.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(40.0, 8.0, 200.0, 4.0)
 param width number(6.0, 1.0, 24.0, 1.0)
 param hue number(15.0, 0.0, 360.0, 5.0)

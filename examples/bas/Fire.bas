@@ -1,6 +1,3 @@
-# Fire - copied from include/BasicExamples/Fire.h
-# Firmware header remains the source of truth for sketches.
-
 param cooling number(40.0, 5.0, 80.0, 5.0)
 param spark number(200.0, 40.0, 255.0, 5.0)
 

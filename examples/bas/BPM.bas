@@ -1,6 +1,3 @@
-# BPM - copied from include/BasicExamples/BPM.h
-# Firmware header remains the source of truth for sketches.
-
 param tempo number(480.0, 200.0, 1000.0, 20.0)
 
 setup

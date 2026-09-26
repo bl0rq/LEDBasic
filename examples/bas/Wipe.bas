@@ -1,6 +1,3 @@
-# Wipe - copied from include/BasicExamples/Wipe.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(30.0, 5.0, 150.0, 5.0)
 param hue number(140.0, 0.0, 360.0, 5.0)
 

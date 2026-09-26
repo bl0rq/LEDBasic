@@ -1,6 +1,3 @@
-# Colorwaves - copied from include/BasicExamples/Colorwaves.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(40.0, 8.0, 180.0, 4.0)
 
 setup
