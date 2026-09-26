@@ -67,7 +67,7 @@ label { display: block; margin: .5rem 0; }
 .hidden { display: none; }
 table { width: 100%; border-collapse: collapse; }
 td, th { text-align: left; padding: .4rem .15rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
-form.row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .35rem 0; }
+.row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .35rem 0; }
 canvas { width: 100%; height: 28px; background: var(--chip); display: block; }
 .param { margin: .8rem 0; }
 .spread { display: flex; justify-content: space-between; gap: .5rem; }
@@ -113,7 +113,22 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); }
     <option>RGB</option><option>RBG</option><option selected>GRB</option>
     <option>GBR</option><option>BRG</option><option>BGR</option>
   </select></label>
-  <label>Length <input name=length type=number min=1 max=1024 value=60></label>
+  <label>Length <input name=length type=number min=1 max=1024 value=60>
+    <button type=button id=find>Find</button></label>
+  <div id=finder class=hidden>
+    <p class=muted>The start of the strip is white, red, green, blue. The end marker is blue, green, white. Move it until that white pixel is the last LED.</p>
+    <p id=finder-read></p>
+    <div class=row>
+      <button type=button id=finder-back10>-10</button>
+      <button type=button id=finder-back>Back</button>
+      <button type=button id=finder-forward>Forward</button>
+      <button type=button id=finder-fwd10>+10</button>
+    </div>
+    <div class=row>
+      <button type=button id=finder-use class=primary>Use this length</button>
+      <button type=button id=finder-cancel>Cancel</button>
+    </div>
+  </div>
   <label>Pin <select name=pin>
     <option selected>16</option><option>14</option><option>13</option>
     <option>12</option><option>4</option><option>2</option>
@@ -464,14 +479,56 @@ function loadParams() {
   }).catch(function () {});
 }
 
-function loadLeds() {
+function showFinder(led) {
+  var on = !!(led.measure && led.measure.active);
+  document.getElementById("finder").classList.toggle("hidden", !on);
+  document.getElementById("find").classList.toggle("hidden", on);
+  if (on) {
+    document.getElementById("finder-read").textContent = "Length " + led.measure.end + ". White is the last LED.";
+  }
+}
+function loadLeds(tries) {
+  if (tries == null) tries = 15;
   return fetch("/api/led").then(function (r) { return r.json(); }).then(function (led) {
     var form = document.getElementById("leds");
     ["type", "order", "length", "pin"].forEach(function (key) {
-      if (led[key] != null && form.elements[key]) form.elements[key].value = String(led[key]);
+      var field = form.elements.namedItem(key);
+      if (led[key] != null && field) field.value = String(led[key]);
     });
+    showFinder(led);
+  }).catch(function () {
+    if (tries > 0) setTimeout(function () { loadLeds(tries - 1); }, 1000);
   });
 }
+function measure(action, by) {
+  var body = { action: action };
+  if (by != null) body.by = by;
+  return fetch("/api/measure", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify(body)
+  }).then(function (response) { return response.json(); }).then(function (data) {
+    if (data.restart) { showRestart(); return; }
+    if (!data.ok) { showError(data.error || "could not measure"); return; }
+    showError("");
+    if (data.end != null) {
+      document.getElementById("finder-read").textContent = "Length " + data.end + ". White is the last LED.";
+      var lengthField = document.getElementById("leds").elements.namedItem("length");
+      if (lengthField) lengthField.value = String(data.end);
+    }
+    if (data.length != null) {
+      var savedLength = document.getElementById("leds").elements.namedItem("length");
+      if (savedLength) savedLength.value = String(data.length);
+    }
+  }).catch(function () { showError("could not measure"); });
+}
+document.getElementById("find").addEventListener("click", function () { measure("start"); });
+document.getElementById("finder-back").addEventListener("click", function () { measure("move", -1); });
+document.getElementById("finder-forward").addEventListener("click", function () { measure("move", 1); });
+document.getElementById("finder-back10").addEventListener("click", function () { measure("move", -10); });
+document.getElementById("finder-fwd10").addEventListener("click", function () { measure("move", 10); });
+document.getElementById("finder-use").addEventListener("click", function () { measure("save"); });
+document.getElementById("finder-cancel").addEventListener("click", function () { measure("cancel"); });
 
 function joinNetwork(ssid, password) {
   return fetch("/api/wifi", {

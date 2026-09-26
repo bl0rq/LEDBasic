@@ -343,6 +343,84 @@ static void handleStatus() {
     sendJson(200, body);
 }
 
+bool netMeasuring() {
+    return gCfg && gCfg->measuring;
+}
+
+int netMeasureEnd() {
+    if (!gCfg) return 0;
+    return gCfg->measureEnd;
+}
+
+static int clampMeasure(int end) {
+    if (end < 4) end = 4;
+    if (end > kMaxLeds) end = kMaxLeds;
+    return end;
+}
+
+static void handleMeasure() {
+    String action;
+    int by = 1;
+    if (asJson()) {
+        JsonDocument doc;
+        if (deserializeJson(doc, gServer.arg("plain"))) {
+            sendError(400, "invalid json", nullptr);
+            return;
+        }
+        action = doc["action"].as<String>();
+        if (!doc["by"].isNull()) by = doc["by"].as<int>();
+    } else {
+        action = gServer.arg("action");
+        if (gServer.hasArg("by")) by = gServer.arg("by").toInt();
+    }
+    if (action == "start") {
+        if (!gCfg->measuring) {
+            gCfg->measureWas = gCfg->length;
+            gCfg->measureEnd = clampMeasure(gCfg->length);
+            gCfg->measuring = true;
+        }
+        saveConfig(*gCfg);
+        sendRestarting();
+        return;
+    }
+    if (!gCfg->measuring) {
+        sendError(400, "not measuring", nullptr);
+        return;
+    }
+    if (action == "move") {
+        gCfg->measureEnd = clampMeasure(gCfg->measureEnd + by);
+        saveConfig(*gCfg);
+        JsonDocument doc;
+        doc["ok"] = true;
+        doc["end"] = gCfg->measureEnd;
+        String body;
+        serializeJson(doc, body);
+        sendJson(200, body);
+        return;
+    }
+    if (action == "save") {
+        gCfg->length = gCfg->measureEnd;
+        gCfg->measuring = false;
+        saveConfig(*gCfg);
+        JsonDocument doc;
+        doc["ok"] = true;
+        doc["restart"] = true;
+        doc["length"] = gCfg->length;
+        String body;
+        serializeJson(doc, body);
+        sendJson(200, body);
+        requestRestart();
+        return;
+    }
+    if (action == "cancel") {
+        gCfg->measuring = false;
+        saveConfig(*gCfg);
+        sendRestarting();
+        return;
+    }
+    sendError(400, "invalid action", nullptr);
+}
+
 static void handleLedGet() {
     JsonDocument doc;
     doc["type"] = gCfg->ledType;
@@ -350,6 +428,10 @@ static void handleLedGet() {
     doc["length"] = gCfg->length;
     doc["pin"] = gCfg->pin;
     doc["brightness"] = outputMaster();
+    JsonObject measure = doc["measure"].to<JsonObject>();
+    measure["active"] = gCfg->measuring;
+    measure["end"] = gCfg->measureEnd;
+    measure["max"] = kMaxLeds;
     String body;
     serializeJson(doc, body);
     sendJson(200, body);
@@ -492,6 +574,7 @@ static void handleLedPut() {
     } else {
         next.master = gCfg->master;
     }
+    next.measuring = false;
     *gCfg = next;
     saveConfig(*gCfg);
     gMasterSaveAt = 0;
@@ -898,6 +981,7 @@ static void registerRoutes() {
     gServer.on("/api/brightness", HTTP_POST, handleBrightnessPost);
     gServer.on("/api/brightness", HTTP_PUT, handleBrightnessPost);
     gServer.on("/api/led", HTTP_GET, handleLedGet);
+    gServer.on("/api/measure", HTTP_POST, handleMeasure);
     gServer.on("/api/led", HTTP_PUT, handleLedPut);
     gServer.on("/api/led", HTTP_POST, handleLedPut);
     gServer.on("/api/programs", HTTP_GET, handlePrograms);

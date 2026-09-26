@@ -94,6 +94,28 @@ const char* outputPaletteName() {
     return paletteName(gPalette);
 }
 
+void outputPaintMeasure(int length) {
+    if (!gLeds || gLedCount <= 0) return;
+    fill_solid(gLeds, gLedCount, CRGB::Black);
+    if (length < 1) length = 1;
+    if (length > gLedCount) length = gLedCount;
+    int white = length - 1;
+    auto paint = [&](int index, CRGB color) {
+        if (index >= 0 && index < gLedCount) gLeds[index] = color;
+    };
+    paint(white - 2, CRGB::Blue);
+    paint(white - 1, CRGB::Green);
+    paint(white, CRGB::White);
+    paint(0, CRGB::White);
+    paint(1, CRGB::Red);
+    paint(2, CRGB::Green);
+    paint(3, CRGB::Blue);
+    FastLED.setBrightness(255);
+    pinMode(kRelayPin, OUTPUT);
+    digitalWrite(kRelayPin, HIGH);
+    FastLED.show();
+}
+
 int outputFps() {
     return gFps;
 }

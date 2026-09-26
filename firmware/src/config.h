@@ -40,6 +40,9 @@ struct DeviceConfig {
     int master;
     String palette;
     String activeProgram;
+    bool measuring;
+    int measureWas;
+    int measureEnd;
 };
 
 bool validLedType(const String& type);

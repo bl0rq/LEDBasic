@@ -32,7 +32,8 @@ void setup() {
                   gConfig.ledType.c_str(), gConfig.colorOrder.c_str(), gConfig.pin,
                   gConfig.length, gConfig.brightness, gConfig.activeProgram.c_str());
 
-    outputBegin(gConfig.ledType, gConfig.colorOrder, gConfig.length, gConfig.pin, gConfig.master);
+    int pixels = gConfig.measuring ? kMaxLeds : gConfig.length;
+    outputBegin(gConfig.ledType, gConfig.colorOrder, pixels, gConfig.pin, gConfig.master);
     outputSetPalette(gConfig.palette.c_str());
     netBegin(gConfig);
 
@@ -53,7 +54,9 @@ void loop() {
     }
 
     netSetBusy(true);
-    if (outputController()) {
+    if (netMeasuring()) {
+        outputPaintMeasure(netMeasureEnd());
+    } else if (outputController()) {
         outputController()->runLoop(millis());
     }
     outputNoteFrame();

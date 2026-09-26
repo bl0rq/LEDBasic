@@ -25,6 +25,9 @@ ApplyResult netApply(const String& name, const String& source, bool remember);
 void netEnqueue(const String& name, const String& source, bool remember);
 bool netTakePending(String& name, String& source, bool& remember);
 
+bool netMeasuring();
+int netMeasureEnd();
+
 const String& netRunningName();
 bool netRunningBuiltin();
 bool netRunningUnsaved();

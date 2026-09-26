@@ -42,6 +42,9 @@ void sanitizeConfig(DeviceConfig& cfg) {
     if (!validBrightness(cfg.master)) cfg.master = kDefaultMaster;
     if (findPalette(cfg.palette.c_str()) < 0) cfg.palette = kDefaultPalette;
     if (cfg.activeProgram.length() == 0) cfg.activeProgram = kDefaultProgram;
+    if (!validLength(cfg.measureWas)) cfg.measureWas = cfg.length;
+    if (cfg.measureEnd < 4) cfg.measureEnd = 4;
+    if (cfg.measureEnd > kMaxLeds) cfg.measureEnd = kMaxLeds;
 }
 
 bool loadConfig(DeviceConfig& cfg) {
@@ -55,6 +58,9 @@ bool loadConfig(DeviceConfig& cfg) {
         cfg.master = kDefaultMaster;
         cfg.palette = kDefaultPalette;
         cfg.activeProgram = kDefaultProgram;
+        cfg.measuring = false;
+        cfg.measureWas = cfg.length;
+        cfg.measureEnd = cfg.length;
         return false;
     }
     cfg.wifiSsid = prefs.getString("ssid", "");
@@ -67,6 +73,9 @@ bool loadConfig(DeviceConfig& cfg) {
     cfg.master = prefs.getInt("master", kDefaultMaster);
     cfg.palette = prefs.getString("pal", kDefaultPalette);
     cfg.activeProgram = prefs.getString("prog", kDefaultProgram);
+    cfg.measuring = prefs.getInt("meas", 0) != 0;
+    cfg.measureWas = prefs.getInt("mwas", cfg.length);
+    cfg.measureEnd = prefs.getInt("mend", cfg.length);
     prefs.end();
     sanitizeConfig(cfg);
     return true;
@@ -88,6 +97,9 @@ void saveConfig(const DeviceConfig& cfg) {
     prefs.putInt("master", cfg.master);
     prefs.putString("pal", cfg.palette);
     prefs.putString("prog", cfg.activeProgram);
+    prefs.putInt("meas", cfg.measuring ? 1 : 0);
+    prefs.putInt("mwas", cfg.measureWas);
+    prefs.putInt("mend", cfg.measureEnd);
     prefs.end();
 }
 
