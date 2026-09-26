@@ -418,6 +418,128 @@ static void handleLedPut() {
     sendOk();
 }
 
+static const char* paramTypeName(ParameterType type) {
+    if (type == PARAM_BOOLEAN) return "boolean";
+    if (type == PARAM_ENUM) return "enum";
+    return "number";
+}
+
+static bool paramValueFromJson(Parameter* param, JsonVariant in, Value& out, String& error) {
+    if (in.isNull()) {
+        error = "invalid value";
+        return false;
+    }
+    if (param->type == PARAM_BOOLEAN) {
+        bool on = false;
+        if (in.is<bool>()) on = in.as<bool>();
+        else if (in.is<const char*>()) {
+            String text = in.as<String>();
+            on = text == "1" || text.equalsIgnoreCase("true") || text.equalsIgnoreCase("on");
+        } else {
+            on = in.as<float>() != 0;
+        }
+        out = Value(on ? 1.0f : 0.0f);
+        return true;
+    }
+    if (param->type == PARAM_ENUM) {
+        int index = -1;
+        if (in.is<const char*>()) {
+            String text = in.as<String>();
+            for (int i = 0; i < (int)param->enumValues.size(); i++) {
+                if (param->enumValues[i].equalsIgnoreCase(text)) {
+                    index = i;
+                    break;
+                }
+            }
+            if (index < 0) index = text.toInt();
+        } else {
+            index = in.as<int>();
+        }
+        if (index < 0 || index >= (int)param->enumValues.size()) {
+            error = "invalid value";
+            return false;
+        }
+        out = Value((float)index);
+        return true;
+    }
+    out = Value(in.as<float>());
+    return true;
+}
+
+static void handleParamsGet() {
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+    BasicLEDController* controller = outputController();
+    if (controller) {
+        std::vector<Parameter> params = controller->getAllParameters();
+        for (size_t i = 0; i < params.size(); i++) {
+            const Parameter& param = params[i];
+            JsonObject item = arr.add<JsonObject>();
+            item["name"] = param.name;
+            item["type"] = paramTypeName(param.type);
+            if (param.type == PARAM_BOOLEAN) {
+                item["value"] = param.currentValue.asNumber() != 0;
+            } else if (param.type == PARAM_ENUM) {
+                item["value"] = (int)param.currentValue.asNumber();
+                JsonArray values = item["values"].to<JsonArray>();
+                for (size_t v = 0; v < param.enumValues.size(); v++) values.add(param.enumValues[v]);
+            } else {
+                item["value"] = param.currentValue.asNumber();
+                item["min"] = param.minValue;
+                item["max"] = param.maxValue;
+                item["step"] = param.stepValue == 0 ? 1.0f : param.stepValue;
+            }
+        }
+    }
+    String body;
+    serializeJson(doc, body);
+    sendJson(200, body);
+}
+
+static void handleParamsPost() {
+    BasicLEDController* controller = outputController();
+    if (!controller) {
+        sendError(400, "no program", nullptr);
+        return;
+    }
+    String name;
+    Value value;
+    String error;
+    bool ok = false;
+    if (asJson()) {
+        JsonDocument doc;
+        if (deserializeJson(doc, gServer.arg("plain"))) {
+            sendError(400, "invalid json", nullptr);
+            return;
+        }
+        name = doc["name"].as<String>();
+        Parameter* param = controller->getParameter(name);
+        if (!param) {
+            sendError(404, "parameter not found", nullptr);
+            return;
+        }
+        ok = paramValueFromJson(param, doc["value"], value, error);
+    } else {
+        name = gServer.arg("name");
+        Parameter* param = controller->getParameter(name);
+        if (!param) {
+            sendError(404, "parameter not found", nullptr);
+            return;
+        }
+        JsonDocument box;
+        String raw = gServer.arg("value");
+        if (param->type == PARAM_NUMBER) box.set(raw.toFloat());
+        else box.set(raw);
+        ok = paramValueFromJson(param, box.as<JsonVariant>(), value, error);
+    }
+    if (!ok) {
+        sendError(400, error.c_str(), nullptr);
+        return;
+    }
+    controller->setParameterValue(name, value);
+    sendOk();
+}
+
 static void handlePrograms() {
     std::vector<ProgramInfo> programs;
     listPrograms(programs);
@@ -687,6 +809,8 @@ static void registerRoutes() {
     gServer.on("/api/led", HTTP_PUT, handleLedPut);
     gServer.on("/api/led", HTTP_POST, handleLedPut);
     gServer.on("/api/programs", HTTP_GET, handlePrograms);
+    gServer.on("/api/params", HTTP_GET, handleParamsGet);
+    gServer.on("/api/params", HTTP_POST, handleParamsPost);
     gServer.on("/api/program", HTTP_GET, handleProgramGet);
     gServer.on("/api/program", HTTP_PUT, handleProgramPut);
     gServer.on("/api/program", HTTP_DELETE, handleDelete);

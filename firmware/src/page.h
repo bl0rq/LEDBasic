@@ -69,6 +69,9 @@ table { width: 100%; border-collapse: collapse; }
 td, th { text-align: left; padding: .4rem .15rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
 form.row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .35rem 0; }
 canvas { width: 100%; height: 28px; background: var(--chip); display: block; }
+.param { margin: .8rem 0; }
+.spread { display: flex; justify-content: space-between; gap: .5rem; }
+input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
@@ -120,6 +123,9 @@ canvas { width: 100%; height: 28px; background: var(--chip); display: block; }
   <thead><tr><th>Name</th><th></th><th></th></tr></thead>
   <tbody id=programs></tbody>
 </table>
+<h2>Params</h2>
+<p id=params-note class=muted>Run a program to adjust its parameters.</p>
+<div id=params></div>
 <h2>Upload</h2>
 <form id=upload method=post action=/api/program/upload enctype=multipart/form-data>
   <label>Name <input name=name required></label>
@@ -191,6 +197,11 @@ function paintStatus(data) {
   var message = data.error && data.error.message ? data.error.message : "";
   fault.textContent = message;
   fault.classList.toggle("hidden", !message);
+  var shown = (data.unsaved ? "unsaved:" : "saved:") + (data.program || "");
+  if (shown !== paramProgram) {
+    paramProgram = shown;
+    loadParams();
+  }
 }
 
 function postForm(url, fields) {
@@ -213,6 +224,7 @@ function report(data) {
     showError("");
     loadPrograms().catch(function () {});
     refresh();
+    loadParams();
     return;
   }
   var message = data.error || "request failed";
@@ -261,6 +273,107 @@ function loadPrograms() {
       body.appendChild(row);
     });
   });
+}
+
+var paramProgram = "";
+var paramTimer = null;
+
+function formatNum(value) {
+  var number = Number(value);
+  if (!isFinite(number)) return String(value);
+  if (Math.abs(number - Math.round(number)) < 0.0001) return String(Math.round(number));
+  return String(Math.round(number * 100) / 100);
+}
+
+function setParam(name, value) {
+  return fetch("/api/params", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ name: name, value: value })
+  }).then(function (response) { return response.json(); }).then(function (data) {
+    if (!data.ok) showError(data.error || "could not set parameter");
+    else showError("");
+  }).catch(function () { showError("could not set parameter"); });
+}
+
+function paramControl(param) {
+  var wrap = document.createElement("div");
+  wrap.className = "param";
+  var row = document.createElement("div");
+  row.className = "spread";
+  var label = document.createElement("span");
+  label.textContent = param.name;
+  var readout = document.createElement("span");
+  readout.className = "muted";
+  row.appendChild(label);
+  row.appendChild(readout);
+  wrap.appendChild(row);
+
+  if (param.type === "boolean") {
+    var check = document.createElement("input");
+    check.type = "checkbox";
+    check.checked = !!param.value;
+    readout.textContent = check.checked ? "on" : "off";
+    check.addEventListener("change", function () {
+      readout.textContent = check.checked ? "on" : "off";
+      setParam(param.name, check.checked);
+    });
+    wrap.appendChild(check);
+    return wrap;
+  }
+
+  if (param.type === "enum") {
+    var select = document.createElement("select");
+    (param.values || []).forEach(function (name, index) {
+      var option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = name;
+      if (index === param.value) option.selected = true;
+      select.appendChild(option);
+    });
+    readout.textContent = (param.values && param.values[param.value]) || "";
+    select.addEventListener("change", function () {
+      readout.textContent = select.options[select.selectedIndex].textContent;
+      setParam(param.name, Number(select.value));
+    });
+    wrap.appendChild(select);
+    return wrap;
+  }
+
+  var range = document.createElement("input");
+  range.type = "range";
+  range.min = param.min;
+  range.max = param.max;
+  range.step = param.step || 1;
+  range.value = param.value;
+  readout.textContent = formatNum(param.value);
+  range.addEventListener("input", function () {
+    readout.textContent = formatNum(range.value);
+    clearTimeout(paramTimer);
+    paramTimer = setTimeout(function () { setParam(param.name, Number(range.value)); }, 120);
+  });
+  range.addEventListener("change", function () {
+    clearTimeout(paramTimer);
+    setParam(param.name, Number(range.value));
+  });
+  wrap.appendChild(range);
+  return wrap;
+}
+
+function loadParams() {
+  return fetch("/api/params").then(function (response) { return response.json(); }).then(function (list) {
+    var box = document.getElementById("params");
+    var note = document.getElementById("params-note");
+    box.textContent = "";
+    if (!list || !list.length) {
+      note.textContent = paramProgram ? "This program has no parameters." : "Run a program to adjust its parameters.";
+      note.classList.remove("hidden");
+      return;
+    }
+    note.textContent = "";
+    note.classList.add("hidden");
+    list.forEach(function (param) { box.appendChild(paramControl(param)); });
+  }).catch(function () {});
 }
 
 function loadLeds() {
