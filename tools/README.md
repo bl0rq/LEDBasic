@@ -16,7 +16,7 @@ Workspace files in `.vscode/` wire the TUI into the editor:
 
 `F5` does not open a GUI window — LEDBasic is a terminal app. The default config pops a separate console so it is not buried under Debug Console. If a previous F5 left the status bar orange, press `Shift+F5` first to stop that session.
 
-Needs CMake and a C++17 compiler (`g++` from MSYS2 on Windows is fine). `tools/build.ps1` prepends `C:\msys64\ucrt64\bin` the same way the native tests do.
+Needs CMake and a C++17 compiler (`g++` from MSYS2 on Windows is fine; `g++`/`clang++` on Linux/macOS). `tools/build.ps1` (Windows) / `tools/build.sh` (Linux/macOS) prepend `C:\msys64\ucrt64\bin` the same way the native tests do, where applicable.
 
 ## CLI build
 
@@ -25,7 +25,7 @@ cmake -B tools/build -S tools
 cmake --build tools/build
 ```
 
-Or: `pwsh -File tools/build.ps1`
+Or: `pwsh -File tools/build.ps1` (Windows) / `tools/build.sh` (Linux/macOS)
 
 ## Headless runner
 
