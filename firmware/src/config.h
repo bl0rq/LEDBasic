@@ -52,5 +52,5 @@ bool validLength(int length);
 bool validBrightness(int brightness);
 void sanitizeConfig(DeviceConfig& cfg);
 bool loadConfig(DeviceConfig& cfg);
-void saveConfig(const DeviceConfig& cfg);
+bool saveConfig(const DeviceConfig& cfg);
 void clearWifi(DeviceConfig& cfg);

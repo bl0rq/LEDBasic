@@ -34,7 +34,7 @@ static EOrder orderFromName(const String& name) {
 }
 
 // The channel pointer has to stay alive. FastLED drops the strip when it is released.
-static void addStrip(const String& ledType, const String& colorOrder, int pin, CRGB* leds, int count) {
+static bool addStrip(const String& ledType, const String& colorOrder, int pin, CRGB* leds, int count) {
     EOrder order = orderFromName(colorOrder);
     fl::span<CRGB> pixels(leds, count);
     fl::ChannelConfig config = ledType == "ws2811"
@@ -43,14 +43,16 @@ static void addStrip(const String& ledType, const String& colorOrder, int pin, C
     gChannel = FastLED.add(config);
     if (!gChannel) {
         Serial.println("LED channel was not created");
+        return false;
     }
+    return true;
 }
 
 bool outputBegin(const String& ledType, const String& colorOrder, int length, int pin, int brightness) {
     gLedCount = length;
     gLeds = new CRGB[length];
     fill_solid(gLeds, length, CRGB::Black);
-    addStrip(ledType, colorOrder, pin, gLeds, length);
+    bool channelOk = addStrip(ledType, colorOrder, pin, gLeds, length);
     gController = new BasicLEDController(gLeds, length);
     gController->setOwnsPhysicalOutput(true);
     gController->setAutoShow(true);
@@ -60,7 +62,10 @@ bool outputBegin(const String& ledType, const String& colorOrder, int length, in
     FastLED.clear(true);
     Serial.printf("Relay GPIO%d %s\n", kRelayPin, brightness > 0 ? "on" : "off");
     gFpsMark = millis();
-    return gController != nullptr;
+    // The interpreter/controller still runs (web UI, params, preview API all
+    // work) even without a physical channel, but report the channel failure
+    // so callers can log that this device has no physical LED output.
+    return channelOk && gController != nullptr;
 }
 
 BasicLEDController* outputController() {

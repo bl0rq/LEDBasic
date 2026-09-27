@@ -81,26 +81,31 @@ bool loadConfig(DeviceConfig& cfg) {
     return true;
 }
 
-void saveConfig(const DeviceConfig& cfg) {
+bool saveConfig(const DeviceConfig& cfg) {
     Preferences prefs;
     if (!prefs.begin(kNamespace, false)) {
         Serial.println("NVS open failed");
-        return;
+        return false;
     }
-    prefs.putString("ssid", cfg.wifiSsid);
-    prefs.putString("pass", cfg.wifiPassword);
-    prefs.putString("type", cfg.ledType);
-    prefs.putString("order", cfg.colorOrder);
-    prefs.putInt("len", cfg.length);
-    prefs.putInt("pin", cfg.pin);
-    prefs.putInt("bri", cfg.brightness);
-    prefs.putInt("master", cfg.master);
-    prefs.putString("pal", cfg.palette);
-    prefs.putString("prog", cfg.activeProgram);
-    prefs.putInt("meas", cfg.measuring ? 1 : 0);
-    prefs.putInt("mwas", cfg.measureWas);
-    prefs.putInt("mend", cfg.measureEnd);
+    bool ok = true;
+    ok &= prefs.putString("ssid", cfg.wifiSsid) == cfg.wifiSsid.length();
+    ok &= prefs.putString("pass", cfg.wifiPassword) == cfg.wifiPassword.length();
+    ok &= prefs.putString("type", cfg.ledType) == cfg.ledType.length();
+    ok &= prefs.putString("order", cfg.colorOrder) == cfg.colorOrder.length();
+    ok &= prefs.putInt("len", cfg.length) != 0;
+    ok &= prefs.putInt("pin", cfg.pin) != 0;
+    ok &= prefs.putInt("bri", cfg.brightness) != 0;
+    ok &= prefs.putInt("master", cfg.master) != 0;
+    ok &= prefs.putString("pal", cfg.palette) == cfg.palette.length();
+    ok &= prefs.putString("prog", cfg.activeProgram) == cfg.activeProgram.length();
+    ok &= prefs.putInt("meas", cfg.measuring ? 1 : 0) != 0;
+    ok &= prefs.putInt("mwas", cfg.measureWas) != 0;
+    ok &= prefs.putInt("mend", cfg.measureEnd) != 0;
     prefs.end();
+    if (!ok) {
+        Serial.println("NVS write failed; configuration may not have persisted");
+    }
+    return ok;
 }
 
 void clearWifi(DeviceConfig& cfg) {

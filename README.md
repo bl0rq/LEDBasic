@@ -120,7 +120,7 @@ Commands (newline-terminated, no blocking read):
 
 ## Dependencies
 
-- [FastLED](https://github.com/FastLED/FastLED) ^3.9.0
+- [FastLED](https://github.com/FastLED/FastLED) ^3.10.0
 - Arduino framework
 - ESP32 platform (ESP-IDF hardware RNG used when available, falls back to Arduino `random()`)
 
@@ -165,6 +165,11 @@ pio run -e esp32dev -t uploadfs
 ```
 
 Factory LED settings are WS2812, color order GRB, GPIO16, 60 LEDs. Change type, order, length, and pin on the page or with `PUT /api/led`. The ten example programs are built in. User programs are stored on the device.
+
+**Security note:** the web UI and JSON API have no authentication or CSRF
+protection. Anyone on the same Wi-Fi network can change settings, upload or
+activate programs, or restart the device. Only run this on a trusted home
+network — do not port-forward or otherwise expose it to the internet.
 
 ## License
 

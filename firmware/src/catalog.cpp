@@ -179,8 +179,11 @@ static String fileBaseName(const String& path) {
 }
 
 bool catalogBegin() {
-    if (!LittleFS.begin(true)) {
-        Serial.println("LittleFS mount failed");
+    // Do not auto-format on mount failure: that would silently wipe any
+    // stored user programs. Log and continue in builtin-only mode instead;
+    // a real recovery requires an explicit, intentional reformat.
+    if (!LittleFS.begin(false)) {
+        Serial.println("LittleFS mount failed; user programs unavailable (builtins only)");
         return false;
     }
     if (!LittleFS.exists("/programs")) {
@@ -221,7 +224,7 @@ bool lookupSource(const String& name, String& out, bool& builtin) {
     return true;
 }
 
-bool saveUserProgram(const String& name, const String& source, String& error) {
+bool validateUserProgram(const String& name, const String& source, String& error) {
     if (!validProgramName(name)) {
         error = "invalid name";
         return false;
@@ -238,12 +241,16 @@ bool saveUserProgram(const String& name, const String& source, String& error) {
         error = "program too large";
         return false;
     }
-    String path = programPath(name);
-    bool replacing = LittleFS.exists(path);
+    bool replacing = LittleFS.exists(programPath(name));
     if (!replacing && countUserPrograms() >= kMaxUserPrograms) {
         error = "program limit reached";
         return false;
     }
+    return true;
+}
+
+bool writeUserProgramFile(const String& name, const String& source, String& error) {
+    String path = programPath(name);
     File file = LittleFS.open(path, "w");
     if (!file) {
         error = "storage failed";
@@ -257,6 +264,11 @@ bool saveUserProgram(const String& name, const String& source, String& error) {
         return false;
     }
     return true;
+}
+
+bool saveUserProgram(const String& name, const String& source, String& error) {
+    if (!validateUserProgram(name, source, error)) return false;
+    return writeUserProgramFile(name, source, error);
 }
 
 bool deleteUserProgram(const String& name, String& error) {

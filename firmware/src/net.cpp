@@ -92,7 +92,9 @@ static void pollButton() {
         gButtonFired = true;
         Serial.println("Button held, clearing Wi-Fi");
         clearWifi(*gCfg);
-        saveConfig(*gCfg);
+        if (!saveConfig(*gCfg)) {
+            Serial.println("Failed to persist cleared Wi-Fi credentials");
+        }
         ESP.restart();
     }
 }
@@ -276,7 +278,9 @@ ApplyResult netApply(const String& name, const String& source, bool remember) {
         gRunningUnsaved = false;
         if (gCfg->activeProgram != name) {
             gCfg->activeProgram = name;
-            saveConfig(*gCfg);
+            if (!saveConfig(*gCfg)) {
+                Serial.println("Failed to persist active program selection");
+            }
         }
         Serial.printf("Running %s\n", name.c_str());
     } else {
@@ -381,7 +385,10 @@ static void handleMeasure() {
             gCfg->measuring = true;
         }
         gMeasureSaveAt = 0;
-        saveConfig(*gCfg);
+        if (!saveConfig(*gCfg)) {
+            sendError(500, "storage failed", nullptr);
+            return;
+        }
         sendRestarting();
         return;
     }
@@ -404,7 +411,10 @@ static void handleMeasure() {
         gCfg->length = gCfg->measureEnd;
         gCfg->measuring = false;
         gMeasureSaveAt = 0;
-        saveConfig(*gCfg);
+        if (!saveConfig(*gCfg)) {
+            sendError(500, "storage failed", nullptr);
+            return;
+        }
         JsonDocument doc;
         doc["ok"] = true;
         doc["restart"] = true;
@@ -418,7 +428,10 @@ static void handleMeasure() {
     if (action == "cancel") {
         gCfg->measuring = false;
         gMeasureSaveAt = 0;
-        saveConfig(*gCfg);
+        if (!saveConfig(*gCfg)) {
+            sendError(500, "storage failed", nullptr);
+            return;
+        }
         sendRestarting();
         return;
     }
@@ -526,7 +539,10 @@ static void handlePalettePost() {
     }
     gCfg->palette = name;
     outputSetPalette(name.c_str());
-    saveConfig(*gCfg);
+    if (!saveConfig(*gCfg)) {
+        sendError(500, "storage failed", nullptr);
+        return;
+    }
     sendOk();
 }
 
@@ -580,7 +596,10 @@ static void handleLedPut() {
     }
     next.measuring = false;
     *gCfg = next;
-    saveConfig(*gCfg);
+    if (!saveConfig(*gCfg)) {
+        sendError(500, "storage failed", nullptr);
+        return;
+    }
     gMasterSaveAt = 0;
     if (hardware) {
         Serial.printf("LED %s %s pin %d x %d, restarting\n",
@@ -747,19 +766,43 @@ static bool wantsActivate() {
     return value != "0" && value != "false";
 }
 
-static void handleProgramPut() {
-    String name = gServer.arg("name");
-    String source = gServer.arg("plain");
+// Persists `source` under `name` and, if requested, activates it.
+// When activating, validate and apply the program *before* writing it to
+// disk: this way an invalid replacement never overwrites the file backing
+// the currently-active program (a stale invalid file would otherwise only
+// surface as a boot failure after a later restart).
+static void saveAndRespond(const String& name, const String& source) {
     String error;
-    if (!saveUserProgram(name, source, error)) {
-        sendError(400, error.c_str(), nullptr);
-        return;
-    }
     if (!wantsActivate()) {
+        if (!saveUserProgram(name, source, error)) {
+            sendError(400, error.c_str(), nullptr);
+            return;
+        }
         sendOk();
         return;
     }
-    sendApply(applyOrQueue(name, source, true));
+
+    if (!validateUserProgram(name, source, error)) {
+        sendError(400, error.c_str(), nullptr);
+        return;
+    }
+    ApplyResult result = applyOrQueue(name, source, true);
+    if (result.ok) {
+        // Not busy: we have a definitive result, so only persist on success.
+        // Busy (pending): the apply is queued for later; persist optimistically
+        // since outputLoad() still falls back safely in memory if it fails.
+        if (!writeUserProgramFile(name, source, error)) {
+            result.ok = false;
+            result.error = error;
+        }
+    }
+    sendApply(result);
+}
+
+static void handleProgramPut() {
+    String name = gServer.arg("name");
+    String source = gServer.arg("plain");
+    saveAndRespond(name, source);
 }
 
 static void handleUploadData() {
@@ -783,19 +826,9 @@ static void handleUpload() {
         return;
     }
     String name = gServer.arg("name");
-    String error;
-    if (!saveUserProgram(name, gUpload, error)) {
-        gUpload = "";
-        sendError(400, error.c_str(), nullptr);
-        return;
-    }
     String source = gUpload;
     gUpload = "";
-    if (!wantsActivate()) {
-        sendOk();
-        return;
-    }
-    sendApply(applyOrQueue(name, source, true));
+    saveAndRespond(name, source);
 }
 
 static void handleActivate() {
@@ -819,7 +852,9 @@ static void handleDelete() {
     }
     if (gCfg->activeProgram == name) {
         gCfg->activeProgram = kDefaultProgram;
-        saveConfig(*gCfg);
+        if (!saveConfig(*gCfg)) {
+            Serial.println("Failed to persist active program change after delete");
+        }
     }
     if (!gRunningUnsaved && gRunningName == name) {
         String source;
@@ -925,14 +960,20 @@ static void handleWifiPost() {
     }
     gCfg->wifiSsid = ssid;
     gCfg->wifiPassword = password;
-    saveConfig(*gCfg);
+    if (!saveConfig(*gCfg)) {
+        sendError(500, "storage failed", nullptr);
+        return;
+    }
     Serial.printf("Saved network %s, restarting\n", ssid.c_str());
     sendRestarting();
 }
 
 static void handleWifiReset() {
     clearWifi(*gCfg);
-    saveConfig(*gCfg);
+    if (!saveConfig(*gCfg)) {
+        sendError(500, "storage failed", nullptr);
+        return;
+    }
     Serial.println("Cleared Wi-Fi, restarting");
     sendRestarting();
 }
@@ -981,6 +1022,14 @@ static void handleRoot() {
     sendHome();
 }
 
+// SECURITY NOTE: none of these routes require authentication or CSRF
+// protection. Once the device joins a station Wi-Fi network, any host on
+// that LAN can upload/activate programs, change LED/Wi-Fi settings, or
+// restart the device. This is accepted as a reasonable tradeoff for a
+// hobby/home controller intended to run on a trusted home network only —
+// do not expose this device's HTTP port to an untrusted network or the
+// public internet without adding an auth layer (e.g. HTTP Basic Auth or a
+// shared token) in front of it.
 static void registerRoutes() {
     gServer.on("/", HTTP_GET, handleRoot);
     gServer.on("/generate_204", HTTP_GET, redirectHome);
@@ -1046,11 +1095,15 @@ void netLoop() {
     if (!gCfg) return;
     if (gMasterSaveAt != 0 && (int32_t)(millis() - gMasterSaveAt) >= 0) {
         gMasterSaveAt = 0;
-        saveConfig(*gCfg);
+        if (!saveConfig(*gCfg)) {
+            Serial.println("Failed to persist brightness change");
+        }
     }
     if (gMeasureSaveAt != 0 && (int32_t)(millis() - gMeasureSaveAt) >= 0) {
         gMeasureSaveAt = 0;
-        saveConfig(*gCfg);
+        if (!saveConfig(*gCfg)) {
+            Serial.println("Failed to persist measurement progress");
+        }
     }
     pollButton();
     if (gPhase == PhaseConnecting) {
