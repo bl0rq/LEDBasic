@@ -5,7 +5,7 @@
 // pull extra flash, and DoubleRainbowForever() never returns (infinite loop).
 
 #include <FastLED.h>
-#include "fx/1d/demoreel100.h"
+#include "fl/fx/1d/demoreel100.h"
 
 CRGB Wheel(short WheelPos);
 void DoubleRainbowForever(int num_leds, CRGB* leds);

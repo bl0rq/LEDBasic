@@ -1,6 +1,6 @@
 #include "Effects.h"
 #include <Arduino.h>
-#include "fx/1d/demoreel100.h"
+#include "fl/fx/1d/demoreel100.h"
 
 #define MAX_LEDS_PER_STRIP 337
 #define FRAMES_PER_SECOND  120
@@ -105,7 +105,7 @@ void ColorOrderTest(int num_leds, CRGB* leds)
 void FastLEDDemoLoop(fl::DemoReel100Ptr demoReel, int num_leds, CRGB* leds)
 {
   //Run the DemoReel100 draw function
-  demoReel->draw(fl::Fx::DrawContext(millis(), leds));
+  demoReel->draw(fl::Fx::DrawContext(millis(), fl::span<CRGB>(leds, num_leds)));
 
   // send the 'leds' array out to the actual LED strip
   FastLED.show();

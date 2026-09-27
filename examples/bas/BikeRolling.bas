@@ -1,6 +1,3 @@
-# BikeRolling — copied from include/BasicExamples/BikeRolling.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(40.0, 5.0, 200.0, 1.0)
 param head_brightness number(255.0, 50.0, 255.0, 5.0)
 param tail_brightness number(200.0, 50.0, 255.0, 5.0)

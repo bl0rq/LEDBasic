@@ -1,4 +1,6 @@
+#include "DeviceClient.h"
 #include "HostSession.h"
+#include "Palettes.h"
 #include "editor.h"
 #include "theme.h"
 
@@ -15,6 +17,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <mutex>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -78,7 +81,7 @@ static Element renderStripCells(const ledbasic::Snapshot& snap, int width) {
     int n = (int)snap.leds.size();
     Elements cells;
     cells.reserve((size_t)n);
-    float scale = snap.brightness / 255.0f;
+    float scale = (snap.brightness / 255.0f) * (snap.master / 255.0f);
     for (int i = 0; i < n; i++) {
         int r = (int)(snap.leds[(size_t)i].r * scale);
         int g = (int)(snap.leds[(size_t)i].g * scale);
@@ -101,15 +104,27 @@ int main(int argc, char** argv) {
 
     int leds = ledbasic::HostSession::kDefaultLeds;
     std::string startFile = defaultProgramPath();
+    std::string deviceArg;
+    bool hasDeviceArg = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--leds" && i + 1 < argc) leds = std::atoi(argv[++i]);
-        else if (a == "--help" || a == "-h") {
-            std::printf("ledbasic-tui [file.bas] [--leds N]\n");
+        else if (a == "--device" && i + 1 < argc) {
+            deviceArg = argv[++i];
+            hasDeviceArg = true;
+        } else if (a == "--help" || a == "-h") {
+            std::printf("ledbasic-tui [file.bas] [--leds N] [--device URL]\n");
             return 0;
         } else if (a[0] != '-') {
             startFile = a;
         }
+    }
+
+    ledbasic::DeviceClient device;
+    if (hasDeviceArg) device.setBaseUrl(deviceArg);
+    else {
+        std::string saved;
+        if (ledbasic::loadDeviceUrl(saved)) device.setBaseUrl(saved);
     }
 
     ledbasic::HostSession session(leds);
@@ -157,12 +172,190 @@ int main(int argc, char** argv) {
     bool showViewMenu = false;
     bool showRunMenu = false;
     bool showDebugMenu = false;
+    bool showDeviceMenu = false;
+    bool showDeviceConnect = false;
+    bool showDeviceName = false;
+    bool showDevicePrograms = false;
+    bool showDeviceLeds = false;
     std::string pathInput;
+    std::string deviceUrlInput = device.baseUrl;
+    std::string deviceNameInput;
+    std::string ledTypeInput = "ws2812";
+    std::string ledOrderInput = "GRB";
+    std::string ledLengthInput = "60";
+    std::string ledPinInput = "16";
+    std::string ledBrightInput = "128";
+    std::string deviceLine = device.baseUrl.empty() ? "device off" : device.baseUrl;
+    std::vector<ledbasic::DeviceProgram> devicePrograms;
+    int deviceIndex = 0;
+    ledbasic::DeviceLed loadedLed;
+    bool hasLoadedLed = false;
+    std::mutex deviceMu;
+    std::vector<std::string> deviceLogs;
+    bool deviceBusy = false;
+    bool deviceProgramsReady = false;
+    std::vector<ledbasic::DeviceProgram> deviceProgramsIncoming;
+    bool deviceLedReady = false;
+    ledbasic::DeviceLed deviceLedIncoming;
+    bool deviceOpenReady = false;
+    std::string deviceOpenName;
+    std::string deviceOpenSource;
+    std::string deviceStatusLive;
+    std::thread deviceThread;
     float speed = 1.0f;
 
     auto pushLog = [&](const std::string& line) {
         immediateLog.push_back(line);
         if (immediateLog.size() > 8) immediateLog.erase(immediateLog.begin());
+    };
+
+    auto deviceNote = [&](const std::string& line) {
+        std::lock_guard<std::mutex> lock(deviceMu);
+        deviceLogs.push_back(line);
+    };
+
+    auto applyDeviceStatus = [&](const ledbasic::DeviceStatus& status) {
+        std::lock_guard<std::mutex> lock(deviceMu);
+        if (!status.ok) {
+            deviceStatusLive = device.baseUrl.empty() ? "device off" : device.baseUrl + " offline";
+            if (!status.message.empty()) deviceLogs.push_back(status.message);
+            return;
+        }
+        std::string program = status.unsaved ? "unsaved" : status.program;
+        deviceStatusLive = device.baseUrl + " " + status.mode + " " + program;
+        if (!status.fault.empty()) deviceLogs.push_back(status.fault);
+    };
+
+    auto refreshDeviceStatus = [&] {
+        applyDeviceStatus(device.status());
+    };
+
+    auto startDeviceJob = [&](std::function<void()> fn) {
+        {
+            std::lock_guard<std::mutex> lock(deviceMu);
+            if (deviceBusy) {
+                deviceLogs.push_back("device request already running");
+                return;
+            }
+            deviceBusy = true;
+        }
+        if (deviceThread.joinable()) deviceThread.join();
+        deviceThread = std::thread([&, fn = std::move(fn)] {
+            fn();
+            std::lock_guard<std::mutex> lock(deviceMu);
+            deviceBusy = false;
+        });
+    };
+
+    auto runOnDevice = [&] {
+        std::string source = editor->getText();
+        startDeviceJob([&, source] {
+            ledbasic::HttpResult result = device.runSource(source);
+            if (result.transportOk && result.status >= 200 && result.status < 300) {
+                deviceNote("device running editor buffer");
+            } else {
+                deviceNote(ledbasic::deviceResultMessage(result));
+            }
+            refreshDeviceStatus();
+        });
+    };
+
+    auto uploadNamed = [&](const std::string& name) {
+        std::string source = editor->getText();
+        if (!ledbasic::validUserProgramName(name)) {
+            startDeviceJob([&, name, source] {
+                ledbasic::HttpResult result = device.runSource(source);
+                if (result.transportOk && result.status >= 200 && result.status < 300) {
+                    deviceNote("ran on device, " + name + " was not stored");
+                } else {
+                    deviceNote(ledbasic::deviceResultMessage(result));
+                }
+                refreshDeviceStatus();
+            });
+            return;
+        }
+        startDeviceJob([&, name, source] {
+            ledbasic::HttpResult result = device.upload(name, source, true);
+            if (result.transportOk && result.status >= 200 && result.status < 300) {
+                deviceNote("device stored " + name);
+            } else {
+                deviceNote(ledbasic::deviceResultMessage(result));
+            }
+            refreshDeviceStatus();
+        });
+    };
+
+    auto uploadCurrent = [&] {
+        std::string name = ledbasic::programNameFromPath(filePath);
+        if (filePath.empty() || !ledbasic::validUserProgramName(name)) {
+            deviceNameInput = name;
+            showDeviceName = true;
+            return;
+        }
+        uploadNamed(name);
+    };
+
+    auto fetchPrograms = [&] {
+        std::vector<ledbasic::DeviceProgram> programs;
+        std::string error;
+        if (!device.programs(programs, error)) {
+            deviceNote(error.empty() ? "could not list programs" : error);
+            return;
+        }
+        std::lock_guard<std::mutex> lock(deviceMu);
+        deviceProgramsIncoming = std::move(programs);
+        deviceProgramsReady = true;
+    };
+
+    auto fetchLeds = [&] {
+        ledbasic::DeviceLed led;
+        std::string error;
+        if (!device.led(led, error)) {
+            deviceNote(error.empty() ? "could not read LEDs" : error);
+            return;
+        }
+        std::lock_guard<std::mutex> lock(deviceMu);
+        deviceLedIncoming = led;
+        deviceLedReady = true;
+    };
+
+    auto saveLeds = [&] {
+        ledbasic::DeviceLed led = loadedLed;
+        led.type = ledTypeInput;
+        led.order = ledOrderInput;
+        led.length = std::atoi(ledLengthInput.c_str());
+        led.pin = std::atoi(ledPinInput.c_str());
+        led.brightness = std::atoi(ledBrightInput.c_str());
+        bool typeOk = led.type == "ws2812" || led.type == "ws2811";
+        bool orderOk = led.order == "RGB" || led.order == "RBG" || led.order == "GRB" ||
+                       led.order == "GBR" || led.order == "BRG" || led.order == "BGR";
+        bool pinOk = led.pin == 16 || led.pin == 14 || led.pin == 13 || led.pin == 12 ||
+                     led.pin == 4 || led.pin == 2;
+        if (!typeOk || !orderOk || led.length < 1 || led.length > 1024 || !pinOk ||
+            led.brightness < 0 || led.brightness > 255) {
+            pushLog("invalid LED settings");
+            return;
+        }
+        bool hardware = !hasLoadedLed || led.type != loadedLed.type || led.order != loadedLed.order ||
+                        led.length != loadedLed.length || led.pin != loadedLed.pin;
+        startDeviceJob([&, led, hardware] {
+            ledbasic::HttpResult result = device.putLed(led);
+            if (!(result.transportOk && result.status >= 200 && result.status < 300)) {
+                deviceNote(ledbasic::deviceResultMessage(result));
+                return;
+            }
+            if (hardware || ledbasic::deviceWillRestart(result)) {
+                deviceNote("board restarting, reconnect in a few seconds");
+            } else {
+                deviceNote("brightness " + std::to_string(led.brightness));
+            }
+            {
+                std::lock_guard<std::mutex> lock(deviceMu);
+                deviceLedIncoming = led;
+                deviceLedReady = true;
+            }
+            if (!hardware) refreshDeviceStatus();
+        });
     };
 
     auto reloadFromEditor = [&]() -> bool {
@@ -240,7 +433,7 @@ int main(int argc, char** argv) {
     };
 
     auto closeMenus = [&] {
-        showFileMenu = showViewMenu = showRunMenu = showDebugMenu = false;
+        showFileMenu = showViewMenu = showRunMenu = showDebugMenu = showDeviceMenu = false;
     };
 
     auto toggleMenu = [&](bool* which) {
@@ -291,11 +484,12 @@ int main(int argc, char** argv) {
     auto viewBtn = menuBtn(" View ", [&] { toggleMenu(&showViewMenu); });
     auto runBtn = menuBtn(" Run ", [&] { toggleMenu(&showRunMenu); });
     auto debugBtn = menuBtn(" Debug ", [&] { toggleMenu(&showDebugMenu); });
+    auto deviceBtn = menuBtn(" Device ", [&] { toggleMenu(&showDeviceMenu); });
     auto helpBtn = menuBtn(" Help ", [&] {
         closeMenus();
         showHelp = true;
     });
-    auto menuBar = Container::Horizontal({fileBtn, viewBtn, runBtn, debugBtn, helpBtn});
+    auto menuBar = Container::Horizontal({fileBtn, viewBtn, runBtn, debugBtn, deviceBtn, helpBtn});
 
     auto wrapMenu = [](const char* title, Component inner) {
         inner |= Renderer([title](Element e) {
@@ -382,6 +576,196 @@ int main(int argc, char** argv) {
         }),
     }));
 
+    auto deviceMenu = wrapMenu("Device", Container::Vertical({
+        menuBtn(" Connect… ", [&] {
+            closeMenus();
+            deviceUrlInput = device.baseUrl;
+            showDeviceConnect = true;
+        }),
+        menuBtn(" Run on device ", [&] {
+            closeMenus();
+            runOnDevice();
+        }),
+        menuBtn(" Upload and run ", [&] {
+            closeMenus();
+            uploadCurrent();
+        }),
+        menuBtn(" Programs… ", [&] {
+            closeMenus();
+            showDevicePrograms = true;
+            startDeviceJob(fetchPrograms);
+        }),
+        menuBtn(" LEDs… ", [&] {
+            closeMenus();
+            showDeviceLeds = true;
+            startDeviceJob(fetchLeds);
+        }),
+    }));
+
+    auto deviceUrlField = Input(&deviceUrlInput, "http://192.168.4.1");
+    auto connectDialog = Container::Vertical({
+        Renderer([] { return text(" Connect") | bold | color(theme::accent()); }),
+        Renderer([] { return separator(); }),
+        deviceUrlField,
+        Container::Horizontal({
+            menuBtn(" Save ", [&] {
+                device.setBaseUrl(deviceUrlInput);
+                deviceUrlInput = device.baseUrl;
+                if (ledbasic::saveDeviceUrl(device.baseUrl)) pushLog("saved " + device.baseUrl);
+                else pushLog("could not save device url");
+                showDeviceConnect = false;
+                startDeviceJob(refreshDeviceStatus);
+            }),
+            menuBtn(" Status ", [&] { startDeviceJob(refreshDeviceStatus); }),
+            menuBtn(" Close ", [&] { showDeviceConnect = false; }),
+        }),
+    });
+    connectDialog |= Renderer([](Element e) {
+        return e | border | bgcolor(theme::chrome()) | size(WIDTH, EQUAL, 52);
+    });
+
+    auto deviceNameField = Input(&deviceNameInput, "program name");
+    auto nameDialog = Container::Vertical({
+        Renderer([] { return text(" Program name") | bold | color(theme::accent()); }),
+        Renderer([] { return separator(); }),
+        deviceNameField,
+        Container::Horizontal({
+            menuBtn(" Upload ", [&] {
+                showDeviceName = false;
+                uploadNamed(deviceNameInput);
+            }),
+            menuBtn(" Cancel ", [&] { showDeviceName = false; }),
+        }),
+    });
+    nameDialog |= Renderer([](Element e) {
+        return e | border | bgcolor(theme::chrome()) | size(WIDTH, EQUAL, 52);
+    });
+
+    auto programList = Renderer([&] {
+        Elements lines;
+        lines.push_back(text(" Programs") | bold | color(theme::accent()));
+        lines.push_back(separator());
+        if (devicePrograms.empty()) {
+            lines.push_back(text("  (none)") | color(theme::dim()));
+            return vbox(std::move(lines));
+        }
+        if (deviceIndex >= (int)devicePrograms.size()) deviceIndex = (int)devicePrograms.size() - 1;
+        if (deviceIndex < 0) deviceIndex = 0;
+        int begin = std::max(0, deviceIndex - 5);
+        int end = std::min((int)devicePrograms.size(), begin + 12);
+        for (int i = begin; i < end; i++) {
+            const auto& program = devicePrograms[(size_t)i];
+            std::string label = std::string(i == deviceIndex ? "> " : "  ") + program.name;
+            if (program.builtin) label += "  built-in";
+            if (program.active) label += "  running";
+            auto line = text(label);
+            if (i == deviceIndex) line = line | inverted;
+            lines.push_back(line);
+        }
+        return vbox(std::move(lines));
+    });
+    auto selectedProgram = [&]() -> const ledbasic::DeviceProgram* {
+        if (deviceIndex < 0 || deviceIndex >= (int)devicePrograms.size()) return nullptr;
+        return &devicePrograms[(size_t)deviceIndex];
+    };
+    auto programsDialog = Container::Vertical({
+        programList,
+        Container::Horizontal({
+            menuBtn(" Prev ", [&] {
+                if (deviceIndex > 0) deviceIndex--;
+            }),
+            menuBtn(" Next ", [&] {
+                if (deviceIndex + 1 < (int)devicePrograms.size()) deviceIndex++;
+            }),
+        }),
+        Container::Horizontal({
+            menuBtn(" Run ", [&] {
+                const ledbasic::DeviceProgram* program = selectedProgram();
+                if (!program) return;
+                std::string name = program->name;
+                startDeviceJob([&, name] {
+                    ledbasic::HttpResult result = device.activate(name);
+                    if (result.transportOk && result.status >= 200 && result.status < 300) {
+                        deviceNote("device running " + name);
+                    } else {
+                        deviceNote(ledbasic::deviceResultMessage(result));
+                    }
+                    refreshDeviceStatus();
+                    fetchPrograms();
+                });
+            }),
+            menuBtn(" Open ", [&] {
+                const ledbasic::DeviceProgram* program = selectedProgram();
+                if (!program) return;
+                std::string name = program->name;
+                startDeviceJob([&, name] {
+                    std::string source;
+                    std::string error;
+                    if (!device.programSource(name, source, error)) {
+                        deviceNote(error.empty() ? "could not open program" : error);
+                        return;
+                    }
+                    std::lock_guard<std::mutex> lock(deviceMu);
+                    deviceOpenName = name;
+                    deviceOpenSource = std::move(source);
+                    deviceOpenReady = true;
+                });
+            }),
+            menuBtn(" Delete ", [&] {
+                const ledbasic::DeviceProgram* program = selectedProgram();
+                if (!program) return;
+                if (program->builtin) {
+                    pushLog("built-in program cannot be deleted");
+                    return;
+                }
+                std::string name = program->name;
+                startDeviceJob([&, name] {
+                    ledbasic::HttpResult result = device.removeProgram(name);
+                    if (result.transportOk && result.status >= 200 && result.status < 300) {
+                        deviceNote("deleted " + name);
+                    } else {
+                        deviceNote(ledbasic::deviceResultMessage(result));
+                    }
+                    refreshDeviceStatus();
+                    fetchPrograms();
+                });
+            }),
+            menuBtn(" Refresh ", [&] { startDeviceJob(fetchPrograms); }),
+            menuBtn(" Close ", [&] { showDevicePrograms = false; }),
+        }),
+    });
+    programsDialog |= Renderer([](Element e) {
+        return e | border | bgcolor(theme::chrome()) | size(WIDTH, EQUAL, 56);
+    });
+
+    auto ledTypeField = Input(&ledTypeInput, "ws2812");
+    auto ledOrderField = Input(&ledOrderInput, "GRB");
+    auto ledLengthField = Input(&ledLengthInput, "60");
+    auto ledPinField = Input(&ledPinInput, "16");
+    auto ledBrightField = Input(&ledBrightInput, "128");
+    auto ledsDialog = Container::Vertical({
+        Renderer([] { return text(" LEDs") | bold | color(theme::accent()); }),
+        Renderer([] { return separator(); }),
+        Renderer([] { return text(" type ws2812 or ws2811") | color(theme::dim()); }),
+        ledTypeField,
+        Renderer([] { return text(" order RGB RBG GRB GBR BRG BGR") | color(theme::dim()); }),
+        ledOrderField,
+        Renderer([] { return text(" length 1-1024") | color(theme::dim()); }),
+        ledLengthField,
+        Renderer([] { return text(" pin 16 14 13 12 4 2") | color(theme::dim()); }),
+        ledPinField,
+        Renderer([] { return text(" brightness 0-255") | color(theme::dim()); }),
+        ledBrightField,
+        Container::Horizontal({
+            menuBtn(" Load ", [&] { startDeviceJob(fetchLeds); }),
+            menuBtn(" Save ", [&] { saveLeds(); }),
+            menuBtn(" Close ", [&] { showDeviceLeds = false; }),
+        }),
+    });
+    ledsDialog |= Renderer([](Element e) {
+        return e | border | bgcolor(theme::chrome()) | size(WIDTH, EQUAL, 52);
+    });
+
     auto openPathField = Input(&pathInput, "path to .bas file");
     auto savePathField = Input(&pathInput, "path to .bas file");
     std::vector<std::string> exampleLabels;
@@ -443,12 +827,15 @@ int main(int argc, char** argv) {
             return vbox(Elements{
                 text("LEDBasic TUI") | bold | color(theme::accent()) | center,
                 separator(),
-                text(" Click File / View / Run / Debug / Help, or use keys:"),
+                text(" Click File / View / Run / Debug / Device / Help, or use keys:"),
                 text(" F5 Run/Continue   Esc Stop   F8 Step   F10 Step Over"),
+                text(" Shift+F5 runs the editor buffer on the connected board"),
                 text(" F9 Toggle breakpoint on the current line"),
                 text(" F4 Immediate    Ctrl+O Open   Ctrl+S Save   Ctrl+N New"),
                 text(" Click a line to move the caret; click the gutter for a breakpoint"),
                 text(" Immediate: ? x   x = 3   RUN   STOP"),
+                text(" Brightness slider scales the strip, and the board when connected"),
+                text(" Palette menu colors the programs that call setpal"),
             });
         }),
         menuBtn(" Close ", [&] { showHelp = false; }),
@@ -457,14 +844,100 @@ int main(int argc, char** argv) {
         return e | border | bgcolor(theme::chrome()) | size(WIDTH, EQUAL, 70) | center;
     });
 
+    int brightnessValue = 255;
+    std::atomic<int> deviceBrightTarget{-1};
+    std::vector<std::string> paletteLabels;
+    for (int i = 0; i < paletteCount(); i++) paletteLabels.push_back(paletteName(i));
+    int paletteIndex = 0;
+    std::atomic<int> devicePaletteTarget{-1};
+    auto paletteDrop = Dropdown(&paletteLabels, &paletteIndex);
+    SliderOption<int> brightOpt;
+    brightOpt.value = &brightnessValue;
+    brightOpt.min = 0;
+    brightOpt.max = 255;
+    brightOpt.increment = 1;
+    brightOpt.on_change = [&] {
+        session.setMasterBrightness(brightnessValue);
+        if (!device.baseUrl.empty()) deviceBrightTarget.store(brightnessValue);
+    };
+    auto brightnessSlider = Slider(brightOpt);
+    auto dimmerRow = Container::Horizontal({
+        brightnessSlider | flex,
+        paletteDrop | size(WIDTH, EQUAL, 18),
+    });
+
     auto workspace = Container::Vertical({
         menuBar,
+        dimmerRow,
         editor,
         paramsFocus,
         immediateInput,
     });
 
     auto renderer = Renderer(workspace, [&] {
+        {
+            std::vector<std::string> logs;
+            bool takePrograms = false;
+            bool takeLed = false;
+            bool takeOpen = false;
+            std::vector<ledbasic::DeviceProgram> programs;
+            ledbasic::DeviceLed led;
+            std::string openName;
+            std::string openSource;
+            {
+                std::lock_guard<std::mutex> lock(deviceMu);
+                logs.swap(deviceLogs);
+                if (!deviceStatusLive.empty()) deviceLine = deviceStatusLive;
+                if (deviceProgramsReady) {
+                    programs.swap(deviceProgramsIncoming);
+                    deviceProgramsReady = false;
+                    takePrograms = true;
+                }
+                if (deviceLedReady) {
+                    led = deviceLedIncoming;
+                    deviceLedReady = false;
+                    takeLed = true;
+                }
+                if (deviceOpenReady) {
+                    openName = deviceOpenName;
+                    openSource = std::move(deviceOpenSource);
+                    deviceOpenReady = false;
+                    takeOpen = true;
+                }
+            }
+            for (const auto& line : logs) pushLog(line);
+            if (takePrograms) {
+                devicePrograms = std::move(programs);
+                if (deviceIndex >= (int)devicePrograms.size()) {
+                    deviceIndex = (int)devicePrograms.size() - 1;
+                }
+                if (deviceIndex < 0) deviceIndex = 0;
+            }
+            if (takeLed) {
+                loadedLed = led;
+                hasLoadedLed = true;
+                ledTypeInput = led.type;
+                ledOrderInput = led.order;
+                ledLengthInput = std::to_string(led.length);
+                ledPinInput = std::to_string(led.pin);
+                ledBrightInput = std::to_string(led.brightness);
+            }
+            if (takeOpen) {
+                session.stop();
+                editor->setText(openSource);
+                filePath.clear();
+                session.clearBreakpoints();
+                editor->setBreakpoints({});
+                editor->setErrorLine(0);
+                if (!session.loadSource(openSource, openName)) {
+                    pushLog("opened " + openName + " with errors");
+                } else {
+                    editor->clearDirty();
+                    pushLog("opened " + openName + " from device");
+                }
+                showDevicePrograms = false;
+            }
+        }
         auto snap = session.snapshot();
         editor->setReadOnly(snap.state == ledbasic::Snapshot::Playing);
         editor->setCurrentLine(snap.state == ledbasic::Snapshot::Paused ? snap.currentLine : 0);
@@ -486,8 +959,68 @@ int main(int argc, char** argv) {
                       " %d LEDs   brightness %u   t=%lums   %.2fx   %s ",
                       (int)snap.leds.size(), (unsigned)snap.brightness, snap.timeMs,
                       speed, stateLabel(snap.state));
+        if (paletteIndex != session.palette()) {
+            session.setPalette(paletteIndex);
+            if (!device.baseUrl.empty()) devicePaletteTarget.store(paletteIndex);
+        }
+
+        int pendingBright = deviceBrightTarget.exchange(-1);
+        if (pendingBright >= 0) {
+            bool busy;
+            {
+                std::lock_guard<std::mutex> lock(deviceMu);
+                busy = deviceBusy;
+            }
+            if (busy) {
+                int empty = -1;
+                deviceBrightTarget.compare_exchange_strong(empty, pendingBright);
+            } else {
+                startDeviceJob([&, pendingBright] {
+                    int send = pendingBright;
+                    for (;;) {
+                        ledbasic::HttpResult result = device.setBrightness(send);
+                        if (!(result.transportOk && result.status >= 200 && result.status < 300) &&
+                            result.error.find("requires Windows") == std::string::npos) {
+                            deviceNote(ledbasic::deviceResultMessage(result));
+                        }
+                        int next = deviceBrightTarget.exchange(-1);
+                        if (next < 0 || next == send) return;
+                        send = next;
+                    }
+                });
+            }
+        }
+
+        int pendingPal = devicePaletteTarget.exchange(-1);
+        if (pendingPal >= 0) {
+            bool busy;
+            {
+                std::lock_guard<std::mutex> lock(deviceMu);
+                busy = deviceBusy;
+            }
+            if (busy) {
+                int empty = -1;
+                devicePaletteTarget.compare_exchange_strong(empty, pendingPal);
+            } else {
+                startDeviceJob([&, pendingPal] {
+                    int send = pendingPal;
+                    for (;;) {
+                        ledbasic::HttpResult result = device.setPalette(paletteName(send));
+                        if (!(result.transportOk && result.status >= 200 && result.status < 300) &&
+                            result.error.find("requires Windows") == std::string::npos) {
+                            deviceNote(ledbasic::deviceResultMessage(result));
+                        }
+                        int next = devicePaletteTarget.exchange(-1);
+                        if (next < 0 || next == send) return;
+                        send = next;
+                    }
+                });
+            }
+        }
+
         Element strip = vbox(Elements{
             text(stripHead) | color(theme::accent()),
+            dimmerRow->Render(),
             renderStripCells(snap, 80),
         });
 
@@ -554,11 +1087,13 @@ int main(int argc, char** argv) {
                 text(" F1 Help ") | color(theme::dim()),
                 text(" F4 Immediate ") | color(theme::dim()),
                 text(" F5 Run ") | color(theme::accent()),
+                text(" Shift+F5 Device ") | color(theme::dim()),
                 text(" F8 Step ") | color(theme::dim()),
                 text(" F9 Break ") | color(theme::dim()),
                 text(" F10 Over ") | color(theme::dim()),
                 text(" Esc Stop ") | color(theme::dim()),
                 filler(),
+                text(deviceLine.size() > 42 ? deviceLine.substr(0, 42) : deviceLine) | color(theme::dim()),
                 text(editor->readOnly() ? " running " : " editing ") | color(theme::dim()),
             }) | bgcolor(theme::chrome()),
         }) | bgcolor(theme::bg());
@@ -570,6 +1105,11 @@ int main(int argc, char** argv) {
     renderer |= Modal(viewMenu, &showViewMenu);
     renderer |= Modal(runMenu, &showRunMenu);
     renderer |= Modal(debugMenu, &showDebugMenu);
+    renderer |= Modal(deviceMenu, &showDeviceMenu);
+    renderer |= Modal(connectDialog, &showDeviceConnect);
+    renderer |= Modal(nameDialog, &showDeviceName);
+    renderer |= Modal(programsDialog, &showDevicePrograms);
+    renderer |= Modal(ledsDialog, &showDeviceLeds);
     renderer |= Modal(openDialog, &showOpen);
     renderer |= Modal(saveDialog, &showSaveAs);
     renderer |= Modal(helpDialog, &showHelp);
@@ -588,10 +1128,16 @@ int main(int argc, char** argv) {
             if (reloadFromEditor()) session.run();
             return true;
         }
+        if (e.input() == "\x1B[15;2~") {
+            runOnDevice();
+            return true;
+        }
         if (e == Event::Escape) {
             if (showHelp || showOpen || showSaveAs || showFileMenu || showViewMenu ||
-                showRunMenu || showDebugMenu) {
+                showRunMenu || showDebugMenu || showDeviceMenu || showDeviceConnect ||
+                showDeviceName || showDevicePrograms || showDeviceLeds) {
                 showHelp = showOpen = showSaveAs = false;
+                showDeviceConnect = showDeviceName = showDevicePrograms = showDeviceLeds = false;
                 closeMenus();
                 return true;
             }
@@ -690,9 +1236,11 @@ int main(int argc, char** argv) {
         }
     });
 
+    if (!device.baseUrl.empty()) startDeviceJob(refreshDeviceStatus);
     screen.Loop(renderer);
     alive = false;
     refresh.join();
+    if (deviceThread.joinable()) deviceThread.join();
     session.stop();
     return 0;
 }

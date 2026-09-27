@@ -16,7 +16,7 @@ Workspace files in `.vscode/` wire the TUI into the editor:
 
 `F5` does not open a GUI window — LEDBasic is a terminal app. The default config pops a separate console so it is not buried under Debug Console. If a previous F5 left the status bar orange, press `Shift+F5` first to stop that session.
 
-Needs CMake and a C++17 compiler (`g++` from MSYS2 on Windows is fine). `tools/build.ps1` prepends `C:\msys64\ucrt64\bin` the same way the native tests do.
+Needs CMake and a C++17 compiler (`g++` from MSYS2 on Windows is fine; `g++`/`clang++` on Linux/macOS). `tools/build.ps1` (Windows) / `tools/build.sh` (Linux/macOS) prepend `C:\msys64\ucrt64\bin` the same way the native tests do, where applicable.
 
 ## CLI build
 
@@ -25,7 +25,7 @@ cmake -B tools/build -S tools
 cmake --build tools/build
 ```
 
-Or: `pwsh -File tools/build.ps1`
+Or: `pwsh -File tools/build.ps1` (Windows) / `tools/build.sh` (Linux/macOS)
 
 ## Headless runner
 
@@ -55,9 +55,12 @@ Built by default (`-DLEDBASIC_BUILD_TUI=ON`):
 ```
 tools/build/tui/ledbasic-tui
 tools/build/tui/ledbasic-tui examples/bas/Breathing.bas --leds 120
+tools/build/tui/ledbasic-tui --device http://192.168.4.1
 ```
 
 Run from the repo root so example paths resolve. Windows Terminal (or any UTF-8 truecolor terminal) is recommended.
+
+F5 still runs the simulator on this PC. The Device menu talks to a board running `firmware/`. Shift+F5 sends the open editor buffer to the board without storing it. Connect saves the URL in `%APPDATA%\LEDBasic\device.url`. `--device` uses that URL for one launch.
 
 ## Manual TUI checklist
 

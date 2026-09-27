@@ -120,7 +120,7 @@ Commands (newline-terminated, no blocking read):
 
 ## Dependencies
 
-- [FastLED](https://github.com/FastLED/FastLED) ^3.9.0
+- [FastLED](https://github.com/FastLED/FastLED) ^3.10.0
 - Arduino framework
 - ESP32 platform (ESP-IDF hardware RNG used when available, falls back to Arduino `random()`)
 
@@ -140,15 +140,36 @@ Write and debug programs in the terminal without a board.
 
 **From VS Code:** `Ctrl+Shift+B` builds, `F5` builds and opens **LEDBasic TUI in a new console window** (Windows Terminal if you have it). It is a terminal app, not a GUI. If an old F5 left the status bar orange, `Shift+F5` stops that session first. Details: [tools/README.md](tools/README.md).
 
-**From a shell:** CMake + a C++17 compiler (MSYS2 `g++` on Windows):
+**From a shell:** CMake + a C++17 compiler (MSYS2 `g++` on Windows; `g++`/`clang++` on Linux/macOS):
 
 ```
-pwsh -File tools/build.ps1
+pwsh -File tools/build.ps1   # Windows
+tools/build.sh               # Linux/macOS
 tools/build/ledbasic run examples/bas/Rainbow.bas --frames 5 --dump-ascii
 tools/build/tui/ledbasic-tui
 ```
 
 `ledbasic-tui` is a QBasic-inspired TUI: editor, live LED strip, F5 run, F8 step, F9 breakpoints, Immediate window.
+
+## Device firmware
+
+`firmware/` is a PlatformIO image for a classic ESP32. It runs LEDBasic on one strip and serves a setup page and JSON API over Wi-Fi.
+
+A new board opens an access point named `LEDBasic-XXXX` with password `ledbasic`. The page is at http://192.168.4.1. After the board joins a network it is at http://ledbasic.local as well as its station IP. Hold the GPIO17 button for five seconds to forget the network and open the access point again.
+
+From `firmware/`:
+
+```
+pio run -e esp32dev -t upload
+pio run -e esp32dev -t uploadfs
+```
+
+Factory LED settings are WS2812, color order GRB, GPIO16, 60 LEDs. Change type, order, length, and pin on the page or with `PUT /api/led`. The ten example programs are built in. User programs are stored on the device.
+
+**Security note:** the web UI and JSON API have no authentication or CSRF
+protection. Anyone on the same Wi-Fi network can change settings, upload or
+activate programs, or restart the device. Only run this on a trusted home
+network — do not port-forward or otherwise expose it to the internet.
 
 ## License
 
