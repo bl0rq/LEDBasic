@@ -441,8 +441,13 @@ bool App::reloadFromEditor() {
     return true;
 }
 
+// Paused on unchanged source: resume where it stopped. Otherwise (stopped,
+// edited since load, or paused on a runtime error) reload and start over.
 void App::runOrContinue() {
-    if (reloadFromEditor()) session_.run();
+    auto snap = session_.snapshot();
+    bool resumable = snap.state == ledbasic::Snapshot::Paused && !snap.runtimeError &&
+                     editor_->getText() == session_.source();
+    if (resumable || reloadFromEditor()) session_.run();
 }
 
 void App::step(bool over) {

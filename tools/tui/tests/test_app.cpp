@@ -32,6 +32,21 @@ Snapshot::State state(App& app) {
     return app.session().snapshot().state;
 }
 
+// Runs a command in the Immediate pane and returns the last log line.
+std::string immediate(App& app, const std::string& cmd) {
+    press(app, Event::F4);
+    for (char c : cmd) press(app, Event::Character(c));
+    press(app, Event::Return);
+    return app.log().empty() ? "" : app.log().back();
+}
+
+bool pausedOn(App& app, int line) {
+    return waitFor([&] {
+        auto s = app.session().snapshot();
+        return s.state == Snapshot::Paused && s.currentLine == line;
+    });
+}
+
 bool anyLedLit(const Snapshot& s) {
     for (const auto& p : s.leds) {
         if (p.r || p.g || p.b) return true;
@@ -96,6 +111,11 @@ void testManualChecklist() {
         return s.state == Snapshot::Paused && s.currentLine != before;
     }), "5: F8 pauses on a different line");
 
+    // F5 while paused continues instead of restarting: the next hit is i = 1.
+    press(*app, Event::F5);
+    CHECK(pausedOn(*app, kSethsvLine), "5: F5 runs on to the breakpoint again");
+    CHECK(immediate(*app, "? i") == "1", "5: F5 continued the loop rather than restarting");
+
     // 6. Params list: Left/Right adjust the effect.
     press(*app, Event::Escape);
     app->paramsFocus()->TakeFocus();
@@ -120,6 +140,22 @@ void testManualChecklist() {
     CHECK(contains(screen, "LEDBasic TUI"), "7: help overlay renders");
     press(*app, Event::Escape);
     CHECK(!app->helpVisible(), "7: Esc closes help");
+}
+
+void testF5AfterEditRestarts() {
+    auto app = makeApp();
+    app->editor().goToLine(kSethsvLine);
+    press(*app, Event::F9);
+    press(*app, Event::F5);
+    CHECK(pausedOn(*app, kSethsvLine), "edit+F5: paused on breakpoint");
+    press(*app, Event::F5);
+    CHECK(pausedOn(*app, kSethsvLine), "edit+F5: second hit");
+    CHECK(immediate(*app, "? i") == "1", "edit+F5: continued to i = 1");
+
+    app->editor().setText(app->editor().getText() + "\n");
+    press(*app, Event::F5);
+    CHECK(pausedOn(*app, kSethsvLine), "edit+F5: paused after reload");
+    CHECK(immediate(*app, "? i") == "0", "edit+F5: edited source restarts from i = 0");
 }
 
 void testLoadErrorReported() {
@@ -165,6 +201,7 @@ void testSpeedAndLedKeys() {
 
 void runAppTests() {
     testManualChecklist();
+    testF5AfterEditRestarts();
     testLoadErrorReported();
     testNewAndExit();
     testSpeedAndLedKeys();
