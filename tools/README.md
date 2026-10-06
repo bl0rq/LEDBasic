@@ -62,7 +62,22 @@ Run from the repo root so example paths resolve. Windows Terminal (or any UTF-8 
 
 F5 still runs the simulator on this PC. The Device menu talks to a board running `firmware/`. Shift+F5 sends the open editor buffer to the board without storing it. Connect saves the URL in `%APPDATA%\LEDBasic\device.url`. `--device` uses that URL for one launch.
 
+## TUI tests
+
+```
+tools/build/tui/ledbasic_tui_tests
+```
+
+No terminal needed. `tui/app.h` builds the whole UI as one FTXUI component (`App`); `main.cpp` only attaches it to the console. The tests send key and mouse events to it and render it into an in-memory screen:
+
+- `tui/tests/test_editor.cpp` — `SourceEditor` editing, navigation, undo, breakpoints, rendering, mouse
+- `tui/tests/test_app.cpp` — the manual checklist below, scripted, plus load errors, Ctrl+N/Ctrl+Q, speed and LED-count keys
+
+The simulator runs on its own thread, so app tests poll with a timeout (`waitFor`) after F5/F8. The Device menu is not covered; tests run with no device URL.
+
 ## Manual TUI checklist
+
+Automated in `test_app.cpp`, but still worth a look after UI changes:
 
 1. Open `examples/bas/Rainbow.bas` (default)
 2. F5 — LEDs animate
