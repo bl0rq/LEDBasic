@@ -41,5 +41,6 @@ add_executable(ledbasic_tui_tests
     tests/test_main.cpp
     tests/test_editor.cpp
     tests/test_app.cpp
+    tests/test_file_menu.cpp
 )
 target_link_libraries(ledbasic_tui_tests PRIVATE ledbasic_tui_core)

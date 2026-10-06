@@ -72,6 +72,7 @@ No terminal needed. `tui/app.h` builds the whole UI as one FTXUI component (`App
 
 - `tui/tests/test_editor.cpp` — `SourceEditor` editing, navigation, undo, breakpoints, rendering, mouse
 - `tui/tests/test_app.cpp` — the manual checklist below, scripted, plus load errors, Ctrl+N/Ctrl+Q, speed and LED-count keys
+- `tui/tests/test_file_menu.cpp` — File menu New/Open/Save/Save As/Exit, driven by clicking labels on the rendered screen and typing into the dialogs; file I/O goes to a temp folder
 
 The simulator runs on its own thread, so app tests poll with a timeout (`waitFor`) after F5/F8. The Device menu is not covered; tests run with no device URL.
 

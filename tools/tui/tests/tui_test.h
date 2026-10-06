@@ -12,6 +12,7 @@
 #include <functional>
 #include <string>
 #include <thread>
+#include <vector>
 
 extern int gFails;
 extern int gPass;
@@ -21,25 +22,56 @@ extern int gPass;
     else { gFails++; std::printf("FAIL: %s  (%s:%d)\n", msg, __FILE__, __LINE__); } \
 } while (0)
 
-// Renders a component into an in-memory screen and returns plain text,
-// one line per row, no ANSI codes. Renders twice so components that size
-// themselves from reflect() boxes (SourceEditor) see their real height.
-inline std::string renderText(ftxui::ComponentBase& c, int width, int height) {
+// One glyph per terminal cell, so x/y index straight into rows.
+using ScreenCells = std::vector<std::vector<std::string>>;
+
+// Renders a component into an in-memory screen. Renders twice so components
+// that size themselves from reflect() boxes (SourceEditor) see their real
+// height, and so mouse hit boxes match what is drawn.
+inline ScreenCells renderCells(ftxui::ComponentBase& c, int width, int height) {
     auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(width),
                                         ftxui::Dimension::Fixed(height));
     for (int pass = 0; pass < 2; pass++) {
         screen.Clear();
         ftxui::Render(screen, c.Render());
     }
-    std::string out;
+    ScreenCells rows((size_t)height);
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
             const std::string& ch = screen.PixelAt(x, y).character;
-            out += ch.empty() ? " " : ch;
+            rows[(size_t)y].push_back(ch.empty() ? " " : ch);
         }
+    }
+    return rows;
+}
+
+// Plain text, one line per row, no ANSI codes.
+inline std::string renderText(ftxui::ComponentBase& c, int width, int height) {
+    std::string out;
+    for (const auto& row : renderCells(c, width, height)) {
+        for (const auto& ch : row) out += ch;
         out += '\n';
     }
     return out;
+}
+
+// Finds ASCII text on screen; the first match, or the last when last is set.
+inline bool findText(const ScreenCells& rows, const std::string& needle, int* outX, int* outY,
+                     bool last = false) {
+    bool found = false;
+    for (size_t y = 0; y < rows.size(); y++) {
+        const auto& row = rows[y];
+        for (size_t x = 0; x + needle.size() <= row.size(); x++) {
+            size_t i = 0;
+            while (i < needle.size() && row[x + i] == std::string(1, needle[i])) i++;
+            if (i < needle.size()) continue;
+            *outX = (int)x;
+            *outY = (int)y;
+            found = true;
+            if (!last) return true;
+        }
+    }
+    return found;
 }
 
 inline bool contains(const std::string& haystack, const std::string& needle) {
