@@ -1026,6 +1026,7 @@ void BasicInterpreter::reset() {
     statementDepth = 0;
     diagnostics.clear();
     parameters.clear();
+    parameterOrder.clear();
     nameToSlot.clear();
     slots.clear();
     internName("PI");
@@ -1787,6 +1788,7 @@ void BasicInterpreter::applyPhysicalBrightness() {
 }
 
 void BasicInterpreter::addParameter(const Parameter& param) {
+    if (parameters.find(param.name) == parameters.end()) parameterOrder.push_back(param.name);
     parameters[param.name] = param;
     int slot = internName(param.name);
     slots[slot] = param.currentValue;
@@ -1809,8 +1811,9 @@ Parameter* BasicInterpreter::getParameter(const String& name) {
 
 std::vector<Parameter> BasicInterpreter::getAllParameters() const {
     std::vector<Parameter> result;
-    for (const auto& pair : parameters) {
-        result.push_back(pair.second);
+    result.reserve(parameterOrder.size());
+    for (const auto& name : parameterOrder) {
+        result.push_back(parameters.find(name)->second);
     }
     return result;
 }
@@ -1823,6 +1826,7 @@ void BasicInterpreter::clearParameters() {
         }
     }
     parameters.clear();
+    parameterOrder.clear();
 }
 
 // =============================================================================

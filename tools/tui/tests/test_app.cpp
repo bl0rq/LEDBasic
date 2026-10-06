@@ -100,18 +100,18 @@ void testManualChecklist() {
     press(*app, Event::Escape);
     app->paramsFocus()->TakeFocus();
     frame(*app);
-    // The interpreter lists params alphabetically: brightness_level, saturation, speed.
+    // Params list in declaration order: speed, saturation, brightness_level.
+    CHECK(paramValue(*app, "speed") == 20.0f, "6: speed starts at 20");
+    press(*app, Event::ArrowRight);
+    CHECK(paramValue(*app, "speed") == 21.0f, "6: Right steps the first param (speed) up by 1");
+    CHECK(contains(frame(*app), "> speed = 21"), "6: params list shows the new value");
+    press(*app, Event::ArrowDown);
+    CHECK(app->paramIndex() == 1, "6: Down selects the next param");
     press(*app, Event::ArrowLeft);
-    CHECK(paramValue(*app, "brightness_level") == 250.0f, "6: Left steps the first param down");
-    CHECK(contains(frame(*app), "> brightness_level = 250"), "6: params list shows the new value");
+    CHECK(paramValue(*app, "saturation") == 250.0f, "6: Left steps saturation down by 5");
     press(*app, Event::ArrowRight);
     press(*app, Event::ArrowRight);
-    CHECK(paramValue(*app, "brightness_level") == 255.0f, "6: param clamps at its max");
-    press(*app, Event::ArrowDown);
-    press(*app, Event::ArrowDown);
-    CHECK(app->paramIndex() == 2, "6: Down selects later params");
-    press(*app, Event::ArrowRight);
-    CHECK(paramValue(*app, "speed") == 21.0f, "6: Right steps speed up by 1");
+    CHECK(paramValue(*app, "saturation") == 255.0f, "6: param clamps at its max");
 
     // 7. F1 opens the help overlay; Esc closes it without stopping anything.
     press(*app, Event::F1);

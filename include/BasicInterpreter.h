@@ -408,6 +408,7 @@ private:
     std::vector<Value> slots;
     std::map<String, int> nameToSlot;
     std::map<String, Parameter> parameters;
+    std::vector<String> parameterOrder; // declaration order, for getAllParameters()
     CRGB* leds;
     int numLeds;
     bool showCalled;

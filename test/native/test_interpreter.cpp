@@ -71,6 +71,9 @@ end
     CHECK(c.loadProgram(String(src)), "param program loads");
     auto params = c.getAllParameters();
     CHECK(params.size() == 4, "four parameters discovered");
+    CHECK(params.size() == 4 && params[0].name == "speed" && params[1].name == "enabled" &&
+          params[2].name == "offset" && params[3].name == "color_scheme",
+          "parameters listed in declaration order");
 
     Parameter* speed = c.getParameter("speed");
     CHECK(speed && speed->type == PARAM_NUMBER, "speed is number");
