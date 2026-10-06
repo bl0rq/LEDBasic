@@ -1107,7 +1107,9 @@ bool App::handleKey(Event e) {
         return true;
     }
 
-    bool typingElsewhere = editor_->Focused() || immediateInput_->Focused();
+    // Single-key shortcuts must not fire while the user types text: in the
+    // editor, the Immediate pane, or any dialog's fields.
+    bool typingElsewhere = anyOverlay() || editor_->Focused() || immediateInput_->Focused();
     if (e.is_character() && !typingElsewhere) {
         std::string ch = e.character();
         if (ch == "1") { applySpeed(0.25f); return true; }
