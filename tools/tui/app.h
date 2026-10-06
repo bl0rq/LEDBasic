@@ -119,6 +119,8 @@ private:
     std::string pathInput_;
     std::vector<std::string> exampleLabels_;
     std::vector<std::string> examplePaths_;
+    int exampleIndex_ = 0;
+    ftxui::Box exampleBox_;
 
     std::string deviceUrlInput_;
     std::string deviceNameInput_;
@@ -150,6 +152,7 @@ private:
     std::atomic<int> devicePaletteTarget_{-1};
 
     ftxui::Component menuBar_;
+    ftxui::Component exampleMenu_;
     ftxui::Component dimmerRow_;
     ftxui::Component paramsFocus_;
     ftxui::Component immediateInput_;

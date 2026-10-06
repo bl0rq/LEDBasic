@@ -1,6 +1,7 @@
 #include "app.h"
 #include "Palettes.h"
 #include "theme.h"
+#include <ftxui/component/mouse.hpp>
 
 #include <algorithm>
 #include <cstdio>
@@ -517,6 +518,7 @@ void App::showOpenDialog() {
     closeMenus();
     showOpen_ = true;
     pathInput_ = examplesDir() + "/";
+    if (exampleMenu_) exampleMenu_->TakeFocus();
 }
 
 void App::onImmediateEnter() {
@@ -815,29 +817,48 @@ Components App::buildOverlays() {
         std::sort(examples.begin(), examples.end());
         for (const auto& p : examples) {
             examplePaths_.push_back(p.string());
-            exampleLabels_.push_back("  " + p.filename().string() + "  ");
+            exampleLabels_.push_back(" " + p.filename().string());
         }
     }
-    Components openKids;
-    openKids.push_back(Renderer([] { return text(" Open") | bold | color(theme::accent()); }));
-    openKids.push_back(Renderer([] { return separator(); }));
-    for (size_t i = 0; i < exampleLabels_.size(); i++) {
-        std::string path = examplePaths_[i];
-        openKids.push_back(Button(&exampleLabels_[i], [this, path] {
-            doOpen(path);
-            showOpen_ = false;
-        }, ButtonOption::Simple()));
-    }
-    openKids.push_back(Renderer([] { return separator(); }));
-    openKids.push_back(Input(&pathInput_, "path to .bas file"));
-    openKids.push_back(Container::Horizontal({
-        menuBtn(" Open ", [this] {
-            doOpen(pathInput_);
-            showOpen_ = false;
+    // A scrolling one-row-per-entry list: there are dozens of examples, and a
+    // column of bordered buttons outgrew the screen and rendered empty.
+    // Arrows/PageUp/PageDown/wheel scroll, Return opens, one click opens.
+    auto openExample = [this] {
+        if (exampleIndex_ < 0 || exampleIndex_ >= (int)examplePaths_.size()) return;
+        doOpen(examplePaths_[(size_t)exampleIndex_]);
+        showOpen_ = false;
+    };
+    MenuOption exampleOpt = MenuOption::Vertical();
+    exampleOpt.on_enter = openExample;
+    auto exampleMenu = Menu(&exampleLabels_, &exampleIndex_, exampleOpt);
+    exampleMenu_ = exampleMenu;
+    auto exampleList = Renderer(exampleMenu, [this, exampleMenu] {
+        return exampleMenu->Render() | vscroll_indicator | frame |
+               size(HEIGHT, LESS_THAN, 12) | reflect(exampleBox_);
+    });
+    exampleList |= CatchEvent([this, exampleMenu, openExample](Event e) {
+        if (!e.is_mouse() || e.mouse().button != Mouse::Left ||
+            e.mouse().motion != Mouse::Pressed ||
+            !exampleBox_.Contain(e.mouse().x, e.mouse().y)) {
+            return false;
+        }
+        if (exampleMenu->OnEvent(e)) openExample();
+        return true;
+    });
+    auto openDialog = dialogFrame(Container::Vertical({
+        Renderer([] { return text(" Open") | bold | color(theme::accent()); }),
+        Renderer([] { return separator(); }),
+        exampleList,
+        Renderer([] { return separator(); }),
+        Input(&pathInput_, "path to .bas file"),
+        Container::Horizontal({
+            menuBtn(" Open ", [this] {
+                doOpen(pathInput_);
+                showOpen_ = false;
+            }),
+            menuBtn(" Cancel ", [this] { showOpen_ = false; }),
         }),
-        menuBtn(" Cancel ", [this] { showOpen_ = false; }),
-    }));
-    auto openDialog = dialogFrame(Container::Vertical(std::move(openKids)), 52);
+    }), 52);
 
     auto saveDialog = dialogFrame(Container::Vertical({
         Renderer([] { return text(" Save as") | bold | color(theme::accent()); }),
