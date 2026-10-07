@@ -20,5 +20,31 @@
     "-workbench.action.files.save",
     "-workbench.action.files.openFile",
     "-workbench.action.files.newUntitledFile"
+  ],
+  "codeStatsViewer.includedExtensions": [
+    ".cs",
+    ".c",
+    ".json",
+    ".h",
+    ".cpp",
+    ".ps1",
+    ".sh",
+    ".py",
+    ".md",
+    ".bas"
+  ],
+  "codeStatsViewer.excludeDirs": [
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "coverage",
+    ".vscode",
+    ".next",
+    "out",
+    "vendor",
+    "bin",
+    "obj",
+    ".pio"
   ]
 }
