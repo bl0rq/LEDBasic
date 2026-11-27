@@ -162,17 +162,17 @@ void App::deviceNote(const std::string& line) {
 void App::applyDeviceStatus(const ledbasic::DeviceStatus& status) {
     std::lock_guard<std::mutex> lock(deviceMu_);
     if (!status.ok) {
-        deviceStatusLive_ = device_.baseUrl.empty() ? "device off" : device_.baseUrl + " offline";
+        deviceStatusLive_ = jobDevice_.baseUrl.empty() ? "device off" : jobDevice_.baseUrl + " offline";
         if (!status.message.empty()) deviceLogs_.push_back(status.message);
         return;
     }
     std::string program = status.unsaved ? "unsaved" : status.program;
-    deviceStatusLive_ = device_.baseUrl + " " + status.mode + " " + program;
+    deviceStatusLive_ = jobDevice_.baseUrl + " " + status.mode + " " + program;
     if (!status.fault.empty()) deviceLogs_.push_back(status.fault);
 }
 
 void App::refreshDeviceStatus() {
-    applyDeviceStatus(device_.status());
+    applyDeviceStatus(jobDevice_.status());
 }
 
 void App::startDeviceJob(std::function<void()> fn) {
@@ -185,6 +185,10 @@ void App::startDeviceJob(std::function<void()> fn) {
         deviceBusy_ = true;
     }
     if (deviceThread_.joinable()) deviceThread_.join();
+    // The worker only ever reads this snapshot, never device_, so Connect can
+    // change the URL while a job runs, and a multi-request job always talks to
+    // the board it started with. Safe to assign: no worker is running here.
+    jobDevice_ = device_;
     deviceThread_ = std::thread([this, fn = std::move(fn)] {
         fn();
         std::lock_guard<std::mutex> lock(deviceMu_);
@@ -195,7 +199,7 @@ void App::startDeviceJob(std::function<void()> fn) {
 void App::runOnDevice() {
     std::string source = editor_->getText();
     startDeviceJob([this, source] {
-        ledbasic::HttpResult result = device_.runSource(source);
+        ledbasic::HttpResult result = jobDevice_.runSource(source);
         if (httpOk(result)) {
             deviceNote("device running editor buffer");
         } else {
@@ -209,7 +213,7 @@ void App::uploadNamed(const std::string& name) {
     std::string source = editor_->getText();
     if (!ledbasic::validUserProgramName(name)) {
         startDeviceJob([this, name, source] {
-            ledbasic::HttpResult result = device_.runSource(source);
+            ledbasic::HttpResult result = jobDevice_.runSource(source);
             if (httpOk(result)) {
                 deviceNote("ran on device, " + name + " was not stored");
             } else {
@@ -220,7 +224,7 @@ void App::uploadNamed(const std::string& name) {
         return;
     }
     startDeviceJob([this, name, source] {
-        ledbasic::HttpResult result = device_.upload(name, source, true);
+        ledbasic::HttpResult result = jobDevice_.upload(name, source, true);
         if (httpOk(result)) {
             deviceNote("device stored " + name);
         } else {
@@ -243,7 +247,7 @@ void App::uploadCurrent() {
 void App::fetchPrograms() {
     std::vector<ledbasic::DeviceProgram> programs;
     std::string error;
-    if (!device_.programs(programs, error)) {
+    if (!jobDevice_.programs(programs, error)) {
         deviceNote(error.empty() ? "could not list programs" : error);
         return;
     }
@@ -255,7 +259,7 @@ void App::fetchPrograms() {
 void App::fetchLeds() {
     ledbasic::DeviceLed led;
     std::string error;
-    if (!device_.led(led, error)) {
+    if (!jobDevice_.led(led, error)) {
         deviceNote(error.empty() ? "could not read LEDs" : error);
         return;
     }
@@ -284,7 +288,7 @@ void App::saveLeds() {
     bool hardware = !hasLoadedLed_ || led.type != loadedLed_.type || led.order != loadedLed_.order ||
                     led.length != loadedLed_.length || led.pin != loadedLed_.pin;
     startDeviceJob([this, led, hardware] {
-        ledbasic::HttpResult result = device_.putLed(led);
+        ledbasic::HttpResult result = jobDevice_.putLed(led);
         if (!httpOk(result)) {
             deviceNote(ledbasic::deviceResultMessage(result));
             return;
@@ -381,6 +385,11 @@ void App::syncDeviceTargets() {
         return deviceBusy_;
     };
 
+    if (deviceRefreshWanted_ && !deviceBusy()) {
+        deviceRefreshWanted_ = false;
+        startDeviceJob([this] { refreshDeviceStatus(); });
+    }
+
     int pendingBright = deviceBrightTarget_.exchange(-1);
     if (pendingBright >= 0) {
         if (deviceBusy()) {
@@ -390,7 +399,7 @@ void App::syncDeviceTargets() {
             startDeviceJob([this, pendingBright] {
                 int send = pendingBright;
                 for (;;) {
-                    ledbasic::HttpResult result = device_.setBrightness(send);
+                    ledbasic::HttpResult result = jobDevice_.setBrightness(send);
                     if (!httpOk(result) && result.error.find("requires Windows") == std::string::npos) {
                         deviceNote(ledbasic::deviceResultMessage(result));
                     }
@@ -411,7 +420,7 @@ void App::syncDeviceTargets() {
             startDeviceJob([this, pendingPal] {
                 int send = pendingPal;
                 for (;;) {
-                    ledbasic::HttpResult result = device_.setPalette(paletteName(send));
+                    ledbasic::HttpResult result = jobDevice_.setPalette(paletteName(send));
                     if (!httpOk(result) && result.error.find("requires Windows") == std::string::npos) {
                         deviceNote(ledbasic::deviceResultMessage(result));
                     }
@@ -469,6 +478,13 @@ void App::saveTo(const std::string& path) {
         return;
     }
     out << editor_->getText();
+    out.close();
+    if (out.fail()) {
+        // Disk full or similar: keep the dirty flag so the edits aren't
+        // silently dropped on exit.
+        pushLog("could not write " + path + " (not saved)");
+        return;
+    }
     filePath_ = path;
     editor_->clearDirty();
     pushLog("saved " + path);
@@ -694,7 +710,9 @@ Components App::buildOverlays() {
                 if (ledbasic::saveDeviceUrl(device_.baseUrl)) pushLog("saved " + device_.baseUrl);
                 else pushLog("could not save device url");
                 showDeviceConnect_ = false;
-                startDeviceJob([this] { refreshDeviceStatus(); });
+                // Started by syncDeviceTargets() once any running job (which
+                // may still be talking to the old URL) has finished.
+                deviceRefreshWanted_ = true;
             }),
             menuBtn(" Status ", [this] { startDeviceJob([this] { refreshDeviceStatus(); }); }),
             menuBtn(" Close ", [this] { showDeviceConnect_ = false; }),
@@ -757,7 +775,7 @@ Components App::buildOverlays() {
                 if (!program) return;
                 std::string name = program->name;
                 startDeviceJob([this, name] {
-                    ledbasic::HttpResult result = device_.activate(name);
+                    ledbasic::HttpResult result = jobDevice_.activate(name);
                     if (httpOk(result)) {
                         deviceNote("device running " + name);
                     } else {
@@ -774,7 +792,7 @@ Components App::buildOverlays() {
                 startDeviceJob([this, name] {
                     std::string source;
                     std::string error;
-                    if (!device_.programSource(name, source, error)) {
+                    if (!jobDevice_.programSource(name, source, error)) {
                         deviceNote(error.empty() ? "could not open program" : error);
                         return;
                     }
@@ -793,7 +811,7 @@ Components App::buildOverlays() {
                 }
                 std::string name = program->name;
                 startDeviceJob([this, name] {
-                    ledbasic::HttpResult result = device_.removeProgram(name);
+                    ledbasic::HttpResult result = jobDevice_.removeProgram(name);
                     if (httpOk(result)) {
                         deviceNote("deleted " + name);
                     } else {

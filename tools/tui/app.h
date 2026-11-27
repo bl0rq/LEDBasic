@@ -100,7 +100,9 @@ private:
     bool anyOverlay() const;
     void closeOverlays();
 
-    ledbasic::DeviceClient device_;
+    ledbasic::DeviceClient device_;     // UI thread only
+    ledbasic::DeviceClient jobDevice_;  // worker thread only; copied from device_ when a job starts
+    bool deviceRefreshWanted_ = false;  // UI thread: refresh status once the worker is idle
     ledbasic::HostSession session_;
     std::shared_ptr<SourceEditor> editor_;
     std::string filePath_;
