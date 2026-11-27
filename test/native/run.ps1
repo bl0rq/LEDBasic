@@ -1,7 +1,10 @@
 $ErrorActionPreference = "Stop"
 $native = $PSScriptRoot
 $root = (Resolve-Path (Join-Path $native "..\..")).Path
-$src = Join-Path $root "src\BasicInterpreter.cpp"
+$src = @(
+    (Join-Path $root "src\BasicInterpreter.cpp"),
+    (Join-Path $root "src\Palettes.cpp")
+)
 $test = Join-Path $native "test_interpreter.cpp"
 $out = Join-Path $native "test_interpreter.exe"
 

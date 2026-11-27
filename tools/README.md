@@ -42,11 +42,15 @@ Exit 0 if any pixel lit, 2 if the strip stayed black, 1 on load/runtime error.
 
 ## Examples
 
-`examples/bas/*.bas` are copies of `include/BasicExamples/*.h`. The headers remain the firmware source of truth. Refresh the copies with:
+`examples/bas/*.bas` are the source of truth. `include/BasicExamples/*.h` are generated from them as plain raw-string headers, and are checked in so the library and firmware build on any compiler without a generation step.
+
+The host CMake build regenerates the headers whenever a `.bas` file changes. The firmware build does not, so after editing an example and before running `pio run`, either build the host tools or run:
 
 ```
-C:\msys64\ucrt64\bin\python.exe tools/_extract_bas.py
+cmake -P tools/gen_examples.cmake
 ```
+
+Commit the `.bas` file and its header together.
 
 ## TUI
 

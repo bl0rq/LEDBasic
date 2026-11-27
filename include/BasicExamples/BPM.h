@@ -1,8 +1,26 @@
+// Generated from examples/bas/BPM.bas by tools/gen_examples.cmake. Do not edit.
 #pragma once
 
 namespace BPM {
-constexpr char program[] = {
-#embed "../../examples/bas/BPM.bas"
-, 0
-};
+constexpr char program[] = R"BAS(# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
+param tempo number(480.0, 200.0, 1000.0, 20.0)
+
+setup
+  brightness(128)
+end
+
+loop(time)
+  beat = time % tempo
+  pulse = 50
+  if beat < 60
+    pulse = 255
+  end
+  for i = 0 to numled()-1
+    h = (i * 20 + floor(time / tempo) * 40) % 360
+    sethsv(i, h, 255, pulse)
+  next
+  show()
+end
+)BAS";
 }

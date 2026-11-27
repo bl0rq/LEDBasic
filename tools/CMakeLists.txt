@@ -13,6 +13,13 @@ endif()
 
 set(LEDBASIC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
+# Refresh include/BasicExamples/*.h from examples/bas/*.bas. CONFIGURE_DEPENDS
+# re-runs configure when a .bas file is added or removed; the explicit list
+# re-runs it when one is edited.
+file(GLOB LEDBASIC_EXAMPLE_SOURCES CONFIGURE_DEPENDS "${LEDBASIC_ROOT}/examples/bas/*.bas")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LEDBASIC_EXAMPLE_SOURCES})
+include(gen_examples.cmake)
+
 find_package(Threads REQUIRED)
 
 add_library(ledbasic_host STATIC

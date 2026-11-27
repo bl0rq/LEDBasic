@@ -157,14 +157,23 @@ tools/build/tui/ledbasic-tui
 
 A new board opens an access point named `LEDBasic-XXXX` with password `ledbasic`. The page is at http://192.168.4.1. After the board joins a network it is at http://ledbasic.local as well as its station IP. Hold the GPIO17 button for five seconds to forget the network and open the access point again.
 
-From `firmware/`:
+From `firmware/`, to flash or update the firmware:
 
 ```
 pio run -e esp32dev -t upload
+```
+
+That is all a routine update needs. Stored programs and settings are kept.
+
+On a brand-new board, or to wipe a board whose storage is corrupt, also flash the filesystem image once:
+
+```
 pio run -e esp32dev -t uploadfs
 ```
 
-Factory LED settings are WS2812, color order GRB, GPIO16, 60 LEDs. Change type, order, length, and pin on the page or with `PUT /api/led`. The ten example programs are built in. User programs are stored on the device.
+**`uploadfs` replaces the whole LittleFS partition with an empty image and erases every stored user program.** Download any programs you want to keep first (Device > Programs in the TUI, or `GET /api/program?name=<name>`).
+
+Factory LED settings are WS2812, color order GRB, GPIO16, 60 LEDs. Change type, order, length, and pin on the page or with `PUT /api/led`. The 63 programs in `examples/bas` are built in. User programs are stored on the device.
 
 **Security note:** the web UI and JSON API have no authentication or CSRF
 protection. Anyone on the same Wi-Fi network can change settings, upload or

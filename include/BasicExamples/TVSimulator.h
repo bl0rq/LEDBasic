@@ -1,8 +1,23 @@
+// Generated from examples/bas/TVSimulator.bas by tools/gen_examples.cmake. Do not edit.
 #pragma once
 
 namespace TVSimulator {
-constexpr char program[] = {
-#embed "../../examples/bas/TVSimulator.bas"
-, 0
-};
+constexpr char program[] = R"BAS(# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
+
+param speed number(120.0, 30.0, 500.0, 10.0)
+
+setup
+  brightness(128)
+end
+
+loop(time)
+  slot = floor(time / speed)
+  for i = 0 to numled()-1
+    h = (i * 19 + slot * 47) % 360
+    v = 80 + (i * 13 + slot) % 160
+    sethsv(i, h, 180, v)
+  next
+  show()
+end
+)BAS";
 }
