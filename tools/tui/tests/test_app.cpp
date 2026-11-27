@@ -47,6 +47,21 @@ bool pausedOn(App& app, int line) {
     });
 }
 
+// Waits for a breakpoint hit on line with loop index i == value. After F5
+// from a pause, run() only queues the command, so the old snapshot can still
+// be Paused on the same line for a moment; pausedOn() alone would return on
+// that stale hit.
+bool pausedOnWithI(App& app, int line, float value) {
+    return waitFor([&] {
+        auto s = app.session().snapshot();
+        if (s.state != Snapshot::Paused || s.currentLine != line) return false;
+        for (const auto& v : s.variables) {
+            if (v.name == "i") return v.number == value;
+        }
+        return false;
+    });
+}
+
 bool anyLedLit(const Snapshot& s) {
     for (const auto& p : s.leds) {
         if (p.r || p.g || p.b) return true;
@@ -113,7 +128,7 @@ void testManualChecklist() {
 
     // F5 while paused continues instead of restarting: the next hit is i = 1.
     press(*app, Event::F5);
-    CHECK(pausedOn(*app, kSethsvLine), "5: F5 runs on to the breakpoint again");
+    CHECK(pausedOnWithI(*app, kSethsvLine, 1), "5: F5 runs on to the breakpoint again");
     CHECK(immediate(*app, "? i") == "1", "5: F5 continued the loop rather than restarting");
 
     // 6. Params list: Left/Right adjust the effect.
@@ -149,12 +164,12 @@ void testF5AfterEditRestarts() {
     press(*app, Event::F5);
     CHECK(pausedOn(*app, kSethsvLine), "edit+F5: paused on breakpoint");
     press(*app, Event::F5);
-    CHECK(pausedOn(*app, kSethsvLine), "edit+F5: second hit");
+    CHECK(pausedOnWithI(*app, kSethsvLine, 1), "edit+F5: second hit");
     CHECK(immediate(*app, "? i") == "1", "edit+F5: continued to i = 1");
 
     app->editor().setText(app->editor().getText() + "\n");
     press(*app, Event::F5);
-    CHECK(pausedOn(*app, kSethsvLine), "edit+F5: paused after reload");
+    CHECK(pausedOnWithI(*app, kSethsvLine, 0), "edit+F5: paused after reload");
     CHECK(immediate(*app, "? i") == "0", "edit+F5: edited source restarts from i = 0");
 }
 
