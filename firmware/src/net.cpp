@@ -293,15 +293,25 @@ ApplyResult netApply(const String& name, const String& source, bool remember) {
     return result;
 }
 
-static ApplyResult applyOrQueue(const String& name, const String& source, bool remember) {
-    if (netBusy()) {
-        netEnqueue(name, source, remember);
-        ApplyResult result;
-        result.ok = true;
-        result.pending = true;
-        return result;
-    }
-    return netApply(name, source, remember);
+// HTTP handlers never load a program themselves. Loading runs the program's
+// setup, and a delay() there calls netLoop(), which would re-enter
+// WebServer::handleClient() from inside the running handler: after
+// HTTP_MAX_DATA_WAIT the nested call drops this handler's client and the
+// response goes to the wrong socket. Instead, syntax-check here so a rejected
+// program still gets an immediate 400 with diagnostics, and let loop() load
+// it. A program that parses always loads, so 202 "pending" means it will run.
+static ApplyResult checkProgram(const String& source) {
+    ApplyResult result;
+    result.ok = outputCheck(source, result.diagnostics);
+    result.pending = result.ok;
+    if (!result.ok) result.error = "program rejected";
+    return result;
+}
+
+static ApplyResult queueApply(const String& name, const String& source, bool remember) {
+    ApplyResult result = checkProgram(source);
+    if (result.ok) netEnqueue(name, source, remember);
+    return result;
 }
 
 static void addRuntimeError(JsonObject doc) {
@@ -774,8 +784,8 @@ static bool wantsActivate() {
 // When activating, the program must parse *before* it is written to disk, so
 // an invalid replacement never overwrites the file backing the active
 // program (it would otherwise only surface as a boot failure after a later
-// restart). When the device is busy the apply itself is queued, so the parse
-// check is the only gate before the write.
+// restart). It is queued only after the write succeeds, so a failed write
+// never leaves the board running (and remembering) a program it didn't save.
 static void saveAndRespond(const String& name, const String& source) {
     String error;
     if (!wantsActivate()) {
@@ -791,17 +801,13 @@ static void saveAndRespond(const String& name, const String& source) {
         sendError(400, error.c_str(), nullptr);
         return;
     }
-    std::vector<OutputDiag> diags;
-    if (!outputCheck(source, diags)) {
-        sendError(400, "program rejected", &diags);
-        return;
-    }
-    ApplyResult result = applyOrQueue(name, source, true);
+    ApplyResult result = checkProgram(source);
     if (result.ok) {
-        // Not busy: the program loaded, so persist it.
-        // Busy (pending): it parsed, so it will load; persist it now.
-        if (!writeUserProgramFile(name, source, error)) {
+        if (writeUserProgramFile(name, source, error)) {
+            netEnqueue(name, source, true);
+        } else {
             result.ok = false;
+            result.pending = false;
             result.error = error;
         }
     }
@@ -848,7 +854,7 @@ static void handleActivate() {
         sendError(404, "program not found", nullptr);
         return;
     }
-    sendApply(applyOrQueue(name, source, true));
+    sendApply(queueApply(name, source, true));
 }
 
 static void handleDelete() {
@@ -869,7 +875,7 @@ static void handleDelete() {
         String source;
         bool builtin = false;
         if (lookupSource(kDefaultProgram, source, builtin)) {
-            sendApply(applyOrQueue(kDefaultProgram, source, true));
+            sendApply(queueApply(kDefaultProgram, source, true));
             return;
         }
     }
@@ -886,7 +892,7 @@ static void handleRun() {
         sendError(400, "program too large", nullptr);
         return;
     }
-    sendApply(applyOrQueue("", source, false));
+    sendApply(queueApply("", source, false));
 }
 
 static void handleWifiGet() {
@@ -1137,7 +1143,14 @@ void netLoop() {
         startMdns();
     }
     if (gApOn) gDns.processNextRequest();
-    gServer.handleClient();
+    // Backstop for the rule above queueApply(): if anything a handler calls
+    // ever reaches netDelay(), don't serve a second request from inside it.
+    static bool inHandler = false;
+    if (!inHandler) {
+        inHandler = true;
+        gServer.handleClient();
+        inHandler = false;
+    }
     if (gRestartAt != 0 && (int32_t)(millis() - gRestartAt) >= 0) {
         ESP.restart();
     }
