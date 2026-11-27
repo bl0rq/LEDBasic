@@ -4,6 +4,7 @@
 #include "DeviceClient.h"
 #include "HostSession.h"
 #include "editor.h"
+#include "file_browser.h"
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
@@ -53,6 +54,12 @@ public:
     float speed() const { return speed_; }
     int paramIndex() const { return paramIndex_; }
     bool helpVisible() const { return showHelp_; }
+    bool openVisible() const { return showOpen_; }
+    bool saveVisible() const { return showSaveAs_; }
+    FileBrowser& openBrowser() { return *openBrowser_; }
+    FileBrowser& saveBrowser() { return *saveBrowser_; }
+    // Where Open/Save As start; follows the user for the rest of the session.
+    const std::string& browseDir() const { return browseDir_; }
 
 private:
     void build();
@@ -83,6 +90,9 @@ private:
     void doNew();
     void doSave();
     void showOpenDialog();
+    void showSaveDialog();
+    std::string lastFileInBrowseDir() const;
+    void rememberFile(const std::string& path);
     void onImmediateEnter();
     void applySpeed(float s);
     void closeMenus();
@@ -116,11 +126,11 @@ private:
     bool showDevicePrograms_ = false;
     bool showDeviceLeds_ = false;
 
-    std::string pathInput_;
-    std::vector<std::string> exampleLabels_;
-    std::vector<std::string> examplePaths_;
-    int exampleIndex_ = 0;
-    ftxui::Box exampleBox_;
+    std::shared_ptr<FileBrowser> openBrowser_;
+    std::shared_ptr<FileBrowser> saveBrowser_;
+    std::string browseDir_;
+    std::string lastFile_;
+    ftxui::Box screenBox_;
 
     std::string deviceUrlInput_;
     std::string deviceNameInput_;
@@ -152,7 +162,6 @@ private:
     std::atomic<int> devicePaletteTarget_{-1};
 
     ftxui::Component menuBar_;
-    ftxui::Component exampleMenu_;
     ftxui::Component dimmerRow_;
     ftxui::Component paramsFocus_;
     ftxui::Component immediateInput_;

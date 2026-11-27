@@ -5,11 +5,13 @@ int gPass = 0;
 
 void runEditorTests();
 void runAppTests();
+void runFileBrowserTests();
 void runFileMenuTests();
 
 int main() {
     runEditorTests();
     runAppTests();
+    runFileBrowserTests();
     runFileMenuTests();
     std::printf("%d passed, %d failed\n", gPass, gFails);
     return gFails ? 1 : 0;

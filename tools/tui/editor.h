@@ -14,6 +14,10 @@
 #include <string>
 #include <vector>
 
+// One line of LEDBasic source with syntax colors (keywords, functions,
+// numbers, strings, comments). Shared by the editor and file previews.
+ftxui::Element highlightBasicLine(const std::string& raw);
+
 class SourceEditor : public ftxui::ComponentBase {
 public:
     SourceEditor();
@@ -53,7 +57,6 @@ private:
     void pushUndo();
     void undo();
     ftxui::Element renderLine(int index, int width) const;
-    ftxui::Color tokenColor(int type) const;
 
     std::vector<std::string> lines_;
     std::vector<std::string> undo_;

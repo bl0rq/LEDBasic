@@ -14,6 +14,8 @@ FetchContent_MakeAvailable(ftxui)
 add_library(ledbasic_tui_core STATIC
     app.cpp
     editor.cpp
+    file_browser.cpp
+    file_browser_model.cpp
     ../host/DeviceClient.cpp
 )
 target_include_directories(ledbasic_tui_core PUBLIC
@@ -42,5 +44,6 @@ add_executable(ledbasic_tui_tests
     tests/test_editor.cpp
     tests/test_app.cpp
     tests/test_file_menu.cpp
+    tests/test_file_browser.cpp
 )
 target_link_libraries(ledbasic_tui_tests PRIVATE ledbasic_tui_core)

@@ -31,7 +31,62 @@ bool isFuncToken(TokenType t) {
            t == TOK_GET_LED_COUNT;
 }
 
+Color tokenColor(TokenType t) {
+    if (isKeywordToken(t)) return theme::keyword();
+    if (isFuncToken(t)) return theme::func();
+    if (t == TOK_NUMBER || t == TOK_TRUE || t == TOK_FALSE) return theme::number();
+    if (t == TOK_STRING) return theme::string();
+    return theme::fg();
+}
+
 } // namespace
+
+Element highlightBasicLine(const std::string& raw) {
+    BasicLexer lexer(String(raw.c_str()));
+    auto tokens = lexer.tokenize();
+
+    std::vector<Color> cols(raw.size(), theme::fg());
+    std::vector<bool> set(raw.size(), false);
+    for (const auto& tok : tokens) {
+        if (tok.type == TOK_EOF || tok.type == TOK_NEWLINE) continue;
+        int start = tok.column - 1;
+        if (start < 0) start = 0;
+        std::string val = tok.value.c_str();
+        if (tok.type == TOK_STRING) val = std::string("\"") + val + "\"";
+        Color c = tokenColor(tok.type);
+        for (int i = 0; i < (int)val.size(); i++) {
+            int p = start + i;
+            if (p >= 0 && p < (int)raw.size()) {
+                cols[(size_t)p] = c;
+                set[(size_t)p] = true;
+            }
+        }
+    }
+    for (size_t i = 0; i < raw.size(); i++) {
+        if (raw[i] == '#' || (raw[i] == '/' && i + 1 < raw.size() && raw[i + 1] == '/')) {
+            bool inString = set[i] && cols[i] == theme::string();
+            if (!inString) {
+                for (size_t j = i; j < raw.size(); j++) cols[j] = theme::comment();
+                break;
+            }
+        }
+    }
+
+    Elements parts;
+    if (raw.empty()) {
+        parts.push_back(ftxui::text(" "));
+    } else {
+        size_t i = 0;
+        while (i < raw.size()) {
+            Color c = cols[i];
+            size_t j = i + 1;
+            while (j < raw.size() && cols[j] == c) j++;
+            parts.push_back(ftxui::text(raw.substr(i, j - i)) | color(c));
+            i = j;
+        }
+    }
+    return hbox(std::move(parts));
+}
 
 SourceEditor::SourceEditor() {
     lines_.push_back("");
@@ -168,15 +223,6 @@ bool SourceEditor::toggleBreakpointAtCursor() {
     return breakpoints_.count(line) != 0;
 }
 
-Color SourceEditor::tokenColor(int type) const {
-    auto t = (TokenType)type;
-    if (isKeywordToken(t)) return theme::keyword();
-    if (isFuncToken(t)) return theme::func();
-    if (t == TOK_NUMBER || t == TOK_TRUE || t == TOK_FALSE) return theme::number();
-    if (t == TOK_STRING) return theme::string();
-    return theme::fg();
-}
-
 Element SourceEditor::renderLine(int index, int width) const {
     const std::string& raw = lines_[(size_t)index];
     int line1 = index + 1;
@@ -195,51 +241,7 @@ Element SourceEditor::renderLine(int index, int width) const {
         ftxui::text(num) | color(isCurrent ? theme::accent() : theme::dim())
     );
 
-    Elements parts;
-    BasicLexer lexer(String(raw.c_str()));
-    auto tokens = lexer.tokenize();
-
-    std::vector<Color> cols(raw.size(), theme::fg());
-    std::vector<bool> set(raw.size(), false);
-    for (const auto& tok : tokens) {
-        if (tok.type == TOK_EOF || tok.type == TOK_NEWLINE) continue;
-        int start = tok.column - 1;
-        if (start < 0) start = 0;
-        std::string val = tok.value.c_str();
-        if (tok.type == TOK_STRING) val = std::string("\"") + val + "\"";
-        Color c = tokenColor((int)tok.type);
-        for (int i = 0; i < (int)val.size(); i++) {
-            int p = start + i;
-            if (p >= 0 && p < (int)raw.size()) {
-                cols[(size_t)p] = c;
-                set[(size_t)p] = true;
-            }
-        }
-    }
-    for (size_t i = 0; i < raw.size(); i++) {
-        if (raw[i] == '#' || (raw[i] == '/' && i + 1 < raw.size() && raw[i + 1] == '/')) {
-            bool inString = set[i] && cols[i] == theme::string();
-            if (!inString) {
-                for (size_t j = i; j < raw.size(); j++) cols[j] = theme::comment();
-                break;
-            }
-        }
-    }
-
-    if (raw.empty()) {
-        parts.push_back(ftxui::text(" "));
-    } else {
-        size_t i = 0;
-        while (i < raw.size()) {
-            Color c = cols[i];
-            size_t j = i + 1;
-            while (j < raw.size() && cols[j] == c) j++;
-            parts.push_back(ftxui::text(raw.substr(i, j - i)) | color(c));
-            i = j;
-        }
-    }
-
-    Element body = hbox(std::move(parts));
+    Element body = highlightBasicLine(raw);
     if (isCurrent) body = body | bgcolor(theme::current());
     if (isError) body = body | color(theme::error());
 

@@ -62,6 +62,25 @@ Run from the repo root so example paths resolve. Windows Terminal (or any UTF-8 
 
 F5 still runs the simulator on this PC. The Device menu talks to a board running `firmware/`. Shift+F5 sends the open editor buffer to the board without storing it. Connect saves the URL in `%APPDATA%\LEDBasic\device.url`. `--device` uses that URL for one launch.
 
+### Open / Save As
+
+Ctrl+O and Ctrl+S (on an untitled buffer) or File > Save As open a file browser modeled on [yazi](https://yazi-rs.github.io/): parent folder, current folder, and a preview of the selection. Any text file can be opened or saved anywhere. The first browse starts in `examples/bas`; after that each dialog starts where you last browsed, opened or saved, for the rest of the session.
+
+| Key | Action |
+|---|---|
+| ↑↓ / j k, PgUp/PgDn, g / G | Move |
+| ← / h / Backspace | Up a folder (cursor lands on the folder you left) |
+| → / l / Enter | Enter a folder, or open the file |
+| `/` | Filter the current folder as you type; Enter keeps it, Esc clears it |
+| `.` | Show/hide hidden files |
+| `~` / `b` | Home folder / `examples/bas` |
+| Ctrl+L or `:` | Type a path: a folder goes there, a file opens |
+| Esc | Clear the filter, else close |
+
+Mouse: click selects, click again opens; one click enters a folder; the wheel scrolls. Going up from a drive root shows the drive list on Windows. Binary files and files over 1 MB are refused.
+
+Save As starts with the cursor in the Name field: type a name (`.bas` is added if there is no extension) and press Enter to save into the current folder. ↑↓ still move the list; Tab switches between the Name field and the list, where Enter on a file copies its name. Saving over a different existing file asks `Overwrite …? y/n`.
+
 ## TUI tests
 
 ```
@@ -72,7 +91,8 @@ No terminal needed. `tui/app.h` builds the whole UI as one FTXUI component (`App
 
 - `tui/tests/test_editor.cpp` — `SourceEditor` editing, navigation, undo, breakpoints, rendering, mouse
 - `tui/tests/test_app.cpp` — the manual checklist below, scripted, plus load errors, Ctrl+N/Ctrl+Q, speed and LED-count keys
-- `tui/tests/test_file_menu.cpp` — File menu New/Open/Save/Save As/Exit, driven by clicking labels on the rendered screen and typing into the dialogs; file I/O goes to a temp folder
+- `tui/tests/test_file_browser.cpp` — `FileBrowserModel` listing order, hidden files, filter, up/enter, errors, previews, drive roots
+- `tui/tests/test_file_menu.cpp` — File menu New/Open/Save/Save As/Exit and the file browser, driven by keys and by clicking labels on the rendered screen; file I/O goes to a temp folder
 
 The simulator runs on its own thread, so app tests poll with a timeout (`waitFor`) after F5/F8. The Device menu is not covered; tests run with no device URL.
 

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "file_browser.h"
 #include "Palettes.h"
 #include "theme.h"
 #include <ftxui/component/mouse.hpp>
@@ -106,12 +107,14 @@ App::App(const AppOptions& options)
     deviceLine_ = device_.baseUrl.empty() ? "device off" : device_.baseUrl;
 
     filePath_ = options.startFile;
+    browseDir_ = FileBrowserModel::normalize(examplesDir());
     std::ifstream in(filePath_);
     if (!filePath_.empty() && in) {
         std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         editor_->setText(body);
         session_.loadFile(filePath_);
         editor_->clearDirty();
+        lastFile_ = FileBrowserModel::normalize(filePath_);
     } else {
         editor_->setText(
             "setup\n"
@@ -507,18 +510,39 @@ void App::doNew() {
 
 void App::doSave() {
     if (filePath_.empty()) {
-        showSaveAs_ = true;
-        pathInput_ = "untitled.bas";
+        showSaveDialog();
     } else {
         saveTo(filePath_);
     }
 }
 
+// The name of the last opened/saved file when it lives in browseDir_, so
+// the browser comes back with the cursor on it.
+std::string App::lastFileInBrowseDir() const {
+    if (lastFile_.empty()) return "";
+    fs::path p(lastFile_);
+    if (FileBrowserModel::normalize(p.parent_path().string()) != browseDir_) return "";
+    return p.filename().string();
+}
+
+void App::rememberFile(const std::string& path) {
+    lastFile_ = FileBrowserModel::normalize(path);
+    browseDir_ = FileBrowserModel::normalize(fs::path(lastFile_).parent_path().string());
+}
+
 void App::showOpenDialog() {
     closeMenus();
+    openBrowser_->show(browseDir_, lastFileInBrowseDir(), filePath_);
     showOpen_ = true;
-    pathInput_ = examplesDir() + "/";
-    if (exampleMenu_) exampleMenu_->TakeFocus();
+    openBrowser_->TakeFocus();
+}
+
+void App::showSaveDialog() {
+    closeMenus();
+    std::string name = filePath_.empty() ? "untitled.bas" : fs::path(filePath_).filename().string();
+    saveBrowser_->show(browseDir_, lastFileInBrowseDir(), filePath_, name);
+    showSaveAs_ = true;
+    saveBrowser_->TakeFocus();
 }
 
 void App::onImmediateEnter() {
@@ -585,11 +609,7 @@ Components App::buildOverlays() {
         menuBtn(" New              Ctrl+N ", [this] { closeMenus(); doNew(); }),
         menuBtn(" Open…            Ctrl+O ", [this] { showOpenDialog(); }),
         menuBtn(" Save             Ctrl+S ", [this] { closeMenus(); doSave(); }),
-        menuBtn(" Save As…                ", [this] {
-            closeMenus();
-            showSaveAs_ = true;
-            pathInput_ = filePath_.empty() ? "untitled.bas" : filePath_;
-        }),
+        menuBtn(" Save As…                ", [this] { showSaveDialog(); }),
         menuBtn(" Exit             Ctrl+Q ", [this] {
             closeMenus();
             if (onExit) onExit();
@@ -808,70 +828,31 @@ Components App::buildOverlays() {
         }),
     }), 52);
 
-    {
-        std::error_code ec;
-        std::vector<fs::path> examples;
-        for (auto& p : fs::directory_iterator(examplesDir(), ec)) {
-            if (p.path().extension() == ".bas") examples.push_back(p.path());
+    openBrowser_ = std::make_shared<FileBrowser>(FileBrowser::Mode::Open, examplesDir());
+    openBrowser_->onOpen = [this](const std::string& path) {
+        doOpen(path);
+        if (filePath_ == path) {
+            rememberFile(path);
+            showOpen_ = false;
+        } else {
+            openBrowser_->setStatus(immediateLog_.empty() ? "could not open" : immediateLog_.back());
         }
-        std::sort(examples.begin(), examples.end());
-        for (const auto& p : examples) {
-            examplePaths_.push_back(p.string());
-            exampleLabels_.push_back(" " + p.filename().string());
-        }
-    }
-    // A scrolling one-row-per-entry list: there are dozens of examples, and a
-    // column of bordered buttons outgrew the screen and rendered empty.
-    // Arrows/PageUp/PageDown/wheel scroll, Return opens, one click opens.
-    auto openExample = [this] {
-        if (exampleIndex_ < 0 || exampleIndex_ >= (int)examplePaths_.size()) return;
-        doOpen(examplePaths_[(size_t)exampleIndex_]);
-        showOpen_ = false;
     };
-    MenuOption exampleOpt = MenuOption::Vertical();
-    exampleOpt.on_enter = openExample;
-    auto exampleMenu = Menu(&exampleLabels_, &exampleIndex_, exampleOpt);
-    exampleMenu_ = exampleMenu;
-    auto exampleList = Renderer(exampleMenu, [this, exampleMenu] {
-        return exampleMenu->Render() | vscroll_indicator | frame |
-               size(HEIGHT, LESS_THAN, 12) | reflect(exampleBox_);
-    });
-    exampleList |= CatchEvent([this, exampleMenu, openExample](Event e) {
-        if (!e.is_mouse() || e.mouse().button != Mouse::Left ||
-            e.mouse().motion != Mouse::Pressed ||
-            !exampleBox_.Contain(e.mouse().x, e.mouse().y)) {
-            return false;
-        }
-        if (exampleMenu->OnEvent(e)) openExample();
-        return true;
-    });
-    auto openDialog = dialogFrame(Container::Vertical({
-        Renderer([] { return text(" Open") | bold | color(theme::accent()); }),
-        Renderer([] { return separator(); }),
-        exampleList,
-        Renderer([] { return separator(); }),
-        Input(&pathInput_, "path to .bas file"),
-        Container::Horizontal({
-            menuBtn(" Open ", [this] {
-                doOpen(pathInput_);
-                showOpen_ = false;
-            }),
-            menuBtn(" Cancel ", [this] { showOpen_ = false; }),
-        }),
-    }), 52);
+    openBrowser_->onCancel = [this] { showOpen_ = false; };
+    openBrowser_->onDirChanged = [this](const std::string& dir) { browseDir_ = dir; };
 
-    auto saveDialog = dialogFrame(Container::Vertical({
-        Renderer([] { return text(" Save as") | bold | color(theme::accent()); }),
-        Renderer([] { return separator(); }),
-        Input(&pathInput_, "path to .bas file"),
-        Container::Horizontal({
-            menuBtn(" Save ", [this] {
-                saveTo(pathInput_);
-                showSaveAs_ = false;
-            }),
-            menuBtn(" Cancel ", [this] { showSaveAs_ = false; }),
-        }),
-    }), 52);
+    saveBrowser_ = std::make_shared<FileBrowser>(FileBrowser::Mode::Save, examplesDir());
+    saveBrowser_->onSave = [this](const std::string& path) {
+        saveTo(path);
+        if (filePath_ == path && !editor_->dirty()) {
+            rememberFile(path);
+            showSaveAs_ = false;
+        } else {
+            saveBrowser_->setStatus("could not write " + path);
+        }
+    };
+    saveBrowser_->onCancel = [this] { showSaveAs_ = false; };
+    saveBrowser_->onDirChanged = [this](const std::string& dir) { browseDir_ = dir; };
 
     auto helpDialog = Container::Vertical({
         Renderer([] {
@@ -883,6 +864,8 @@ Components App::buildOverlays() {
                 text(" Shift+F5 runs the editor buffer on the connected board"),
                 text(" F9 Toggle breakpoint on the current line"),
                 text(" F4 Immediate    Ctrl+O Open   Ctrl+S Save   Ctrl+N New"),
+                text(" Open/Save: j/k move  h/l up/in  / filter  . hidden  ~ home"),
+                text("            b bas folder  Ctrl+L type a path  Tab name/list"),
                 text(" Click a line to move the caret; click the gutter for a breakpoint"),
                 text(" Immediate: ? x   x = 3   RUN   STOP"),
                 text(" Brightness slider scales the strip, and the board when connected"),
@@ -898,7 +881,7 @@ Components App::buildOverlays() {
     // Order matches the flags in build(); later entries draw on top.
     return {
         fileMenu, viewMenu, runMenu, debugMenu, deviceMenu, connectDialog, nameDialog,
-        programsDialog, ledsDialog, openDialog, saveDialog, helpDialog,
+        programsDialog, ledsDialog, openBrowser_, saveBrowser_, helpDialog,
     };
 }
 
@@ -946,6 +929,10 @@ void App::build() {
 
 Element App::renderWorkspace() {
     drainDeviceResults();
+    int screenW = screenBox_.x_max - screenBox_.x_min + 1;
+    int screenH = screenBox_.y_max - screenBox_.y_min + 1;
+    openBrowser_->setScreenSize(screenW, screenH);
+    saveBrowser_->setScreenSize(screenW, screenH);
 
     auto snap = session_.snapshot();
     editor_->setReadOnly(snap.state == ledbasic::Snapshot::Playing);
@@ -1049,10 +1036,12 @@ Element App::renderWorkspace() {
             text(deviceLine_.size() > 42 ? deviceLine_.substr(0, 42) : deviceLine_) | color(theme::dim()),
             text(editor_->readOnly() ? " running " : " editing ") | color(theme::dim()),
         }) | bgcolor(theme::chrome()),
-    }) | bgcolor(theme::bg());
+    }) | bgcolor(theme::bg()) | reflect(screenBox_);
 }
 
 bool App::handleKey(Event e) {
+    // The file browser owns the keyboard while open (Esc, Ctrl+L, typing).
+    if (showOpen_ || showSaveAs_) return false;
     if (e == Event::F1) {
         closeMenus();
         showHelp_ = true;
