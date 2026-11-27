@@ -1,4 +1,5 @@
 #include "app.h"
+#include "Utf8Path.h"
 
 #include <ftxui/component/screen_interactive.hpp>
 
@@ -42,11 +43,14 @@ int main(int argc, char** argv) {
     AppOptions options;
     options.startFile = defaultProgramPath();
     bool hasDeviceArg = false;
-    for (int i = 1; i < argc; i++) {
-        std::string a = argv[i];
-        if (a == "--leds" && i + 1 < argc) options.leds = std::atoi(argv[++i]);
-        else if (a == "--device" && i + 1 < argc) {
-            options.deviceUrl = argv[++i];
+    // UTF-8, so a file name like café.bas reaches the filesystem intact.
+    std::vector<std::string> args = ledbasic::utf8Args(argc, argv);
+    for (int i = 1; i < (int)args.size(); i++) {
+        const std::string& a = args[i];
+        if (a.empty()) continue;
+        if (a == "--leds" && i + 1 < (int)args.size()) options.leds = std::atoi(args[++i].c_str());
+        else if (a == "--device" && i + 1 < (int)args.size()) {
+            options.deviceUrl = args[++i];
             hasDeviceArg = true;
         } else if (a == "--help" || a == "-h") {
             std::printf("ledbasic-tui [file.bas] [--leds N] [--device URL]\n");

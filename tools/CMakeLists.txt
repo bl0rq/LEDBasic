@@ -19,6 +19,7 @@ add_library(ledbasic_host STATIC
     "${LEDBASIC_ROOT}/src/BasicInterpreter.cpp"
     "${LEDBASIC_ROOT}/src/Palettes.cpp"
     host/HostSession.cpp
+    host/Utf8Path.cpp
 )
 
 add_executable(ledbasic_tests "${LEDBASIC_ROOT}/test/native/test_interpreter.cpp")
@@ -29,6 +30,9 @@ target_include_directories(ledbasic_host PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/host"
 )
 target_link_libraries(ledbasic_host PUBLIC Threads::Threads)
+if(WIN32)
+    target_link_libraries(ledbasic_host PUBLIC shell32) # CommandLineToArgvW
+endif()
 
 add_executable(ledbasic cli/main.cpp)
 target_link_libraries(ledbasic PRIVATE ledbasic_host)

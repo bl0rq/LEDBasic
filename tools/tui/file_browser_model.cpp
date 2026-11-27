@@ -1,9 +1,12 @@
 #include "file_browser_model.h"
+#include "Utf8Path.h"
 
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <sstream>
 #include <system_error>
 
 #ifdef _WIN32
@@ -23,7 +26,7 @@ std::string lower(std::string s) {
 }
 
 bool isHidden(const fs::directory_entry& e) {
-    std::string name = e.path().filename().string();
+    std::string name = ledbasic::utf8FromPath(e.path().filename());
     if (!name.empty() && name[0] == '.') return true;
 #ifdef _WIN32
     DWORD attrs = GetFileAttributesW(e.path().c_str());
@@ -41,18 +44,18 @@ bool isDriveRoot(const fs::path& p) {
 std::string FileBrowserModel::normalize(const std::string& path) {
     if (path.empty()) return path;
     std::error_code ec;
-    fs::path p = fs::absolute(fs::path(path), ec);
-    if (ec) p = fs::path(path);
+    fs::path p = fs::absolute(ledbasic::pathFromUtf8(path), ec);
+    if (ec) p = ledbasic::pathFromUtf8(path);
     p = p.lexically_normal();
-    std::string s = p.generic_string();
+    std::string s = ledbasic::genericUtf8FromPath(p);
     // "C:/dir/" -> "C:/dir", but keep "C:/" and "/".
-    while (s.size() > 1 && s.back() == '/' && !isDriveRoot(fs::path(s))) s.pop_back();
+    while (s.size() > 1 && s.back() == '/' && !isDriveRoot(ledbasic::pathFromUtf8(s))) s.pop_back();
     return s;
 }
 
 std::string FileBrowserModel::parentOf(const std::string& dir) {
     if (dir.empty()) return dir;
-    fs::path p(dir);
+    fs::path p = ledbasic::pathFromUtf8(dir);
     if (isDriveRoot(p)) {
 #ifdef _WIN32
         return "";
@@ -60,7 +63,7 @@ std::string FileBrowserModel::parentOf(const std::string& dir) {
         return dir;
 #endif
     }
-    return normalize(p.parent_path().generic_string());
+    return normalize(ledbasic::genericUtf8FromPath(p.parent_path()));
 }
 
 bool FileBrowserModel::list(const std::string& dir, bool showHidden, std::vector<FileEntry>& out,
@@ -80,7 +83,9 @@ bool FileBrowserModel::list(const std::string& dir, bool showHidden, std::vector
     }
 #endif
     std::error_code ec;
-    fs::directory_iterator it(fs::path(dir), fs::directory_options::skip_permission_denied, ec);
+    // No skip_permission_denied: it turns "can't open this folder" into an
+    // empty listing, and the caller must see that as an error.
+    fs::directory_iterator it(ledbasic::pathFromUtf8(dir), ec);
     if (ec) {
         if (error) *error = "cannot open " + dir + ": " + ec.message();
         return false;
@@ -88,7 +93,7 @@ bool FileBrowserModel::list(const std::string& dir, bool showHidden, std::vector
     for (; it != fs::directory_iterator(); it.increment(ec)) {
         if (ec) break;
         FileEntry e;
-        e.name = it->path().filename().string();
+        e.name = ledbasic::utf8FromPath(it->path().filename());
         e.hidden = isHidden(*it);
         if (e.hidden && !showHidden) continue;
         std::error_code sec;
@@ -111,7 +116,7 @@ bool FileBrowserModel::list(const std::string& dir, bool showHidden, std::vector
 FilePreview FileBrowserModel::preview(const std::string& path, int maxLines) {
     FilePreview out;
     std::error_code ec;
-    fs::path p(path);
+    fs::path p = ledbasic::pathFromUtf8(path);
     if (path.empty() || fs::is_directory(p, ec)) {
         std::vector<FileEntry> entries;
         if (!list(path, false, entries)) return out;
@@ -130,18 +135,17 @@ FilePreview FileBrowserModel::preview(const std::string& path, int maxLines) {
     }
     std::ifstream in(p, std::ios::binary);
     if (!in) return out;
-    std::string head(4096, '\0');
-    in.read(&head[0], (std::streamsize)head.size());
-    head.resize((size_t)in.gcount());
-    if (head.find('\0') != std::string::npos) {
+    // Read the whole file (bounded by kMaxPreviewBytes above): a NUL anywhere
+    // makes it binary, not just one in the first few KB.
+    std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (body.find('\0') != std::string::npos) {
         out.kind = FilePreview::Binary;
         return out;
     }
-    in.clear();
-    in.seekg(0);
     out.kind = FilePreview::Text;
+    std::istringstream lines(body);
     std::string line;
-    while ((int)out.lines.size() < maxLines && std::getline(in, line)) {
+    while ((int)out.lines.size() < maxLines && std::getline(lines, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         std::string expanded;
         for (char c : line) {
@@ -185,7 +189,7 @@ void FileBrowserModel::refresh() {
 void FileBrowserModel::up() {
     std::string parent = parentOf(cwd_);
     if (parent == cwd_) return;
-    std::string child = cwd_.empty() ? "" : fs::path(cwd_).filename().generic_string();
+    std::string child = cwd_.empty() ? "" : ledbasic::genericUtf8FromPath(ledbasic::pathFromUtf8(cwd_).filename());
     if (child.empty() && !cwd_.empty()) child = cwd_; // drive root, e.g. "C:/"
     if (chdir(parent)) selectName(child);
 }
@@ -248,7 +252,7 @@ const FileEntry* FileBrowserModel::selectedEntry() const {
 
 std::string FileBrowserModel::pathOf(const std::string& name) const {
     if (cwd_.empty()) return name; // drive list entries are already paths
-    return normalize((fs::path(cwd_) / name).generic_string());
+    return normalize(ledbasic::genericUtf8FromPath(ledbasic::pathFromUtf8(cwd_) / ledbasic::pathFromUtf8(name)));
 }
 
 std::string FileBrowserModel::selectedPath() const {

@@ -2,6 +2,7 @@
 #include "file_browser.h"
 #include "Palettes.h"
 #include "theme.h"
+#include "Utf8Path.h"
 #include <ftxui/component/mouse.hpp>
 
 #include <algorithm>
@@ -20,16 +21,17 @@ namespace fs = std::filesystem;
 #endif
 
 std::string examplesDir() {
-    fs::path p(LEDBASIC_EXAMPLES_DIR);
-    if (fs::is_directory(p)) return p.string();
+    // The build path is a UTF-8 string literal.
+    fs::path p = ledbasic::pathFromUtf8(LEDBASIC_EXAMPLES_DIR);
+    if (fs::is_directory(p)) return ledbasic::utf8FromPath(p);
     if (fs::is_directory("examples/bas")) return "examples/bas";
     if (fs::is_directory("../examples/bas")) return "../examples/bas";
-    return p.string();
+    return ledbasic::utf8FromPath(p);
 }
 
 std::string defaultProgramPath() {
-    fs::path p = fs::path(examplesDir()) / "Rainbow.bas";
-    return p.string();
+    fs::path p = ledbasic::pathFromUtf8(examplesDir()) / "Rainbow.bas";
+    return ledbasic::utf8FromPath(p);
 }
 
 namespace {
@@ -108,7 +110,7 @@ App::App(const AppOptions& options)
 
     filePath_ = options.startFile;
     browseDir_ = FileBrowserModel::normalize(examplesDir());
-    std::ifstream in(filePath_);
+    std::ifstream in(ledbasic::pathFromUtf8(filePath_));
     if (!filePath_.empty() && in) {
         std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         editor_->setText(body);
@@ -472,7 +474,7 @@ void App::step(bool over) {
 }
 
 void App::saveTo(const std::string& path) {
-    std::ofstream out(path);
+    std::ofstream out(ledbasic::pathFromUtf8(path));
     if (!out) {
         pushLog("could not write " + path);
         return;
@@ -492,7 +494,7 @@ void App::saveTo(const std::string& path) {
 
 void App::doOpen(const std::string& path) {
     session_.stop();
-    std::ifstream in(path);
+    std::ifstream in(ledbasic::pathFromUtf8(path));
     if (!in) {
         pushLog("could not open " + path);
         return;
@@ -536,14 +538,14 @@ void App::doSave() {
 // the browser comes back with the cursor on it.
 std::string App::lastFileInBrowseDir() const {
     if (lastFile_.empty()) return "";
-    fs::path p(lastFile_);
-    if (FileBrowserModel::normalize(p.parent_path().string()) != browseDir_) return "";
-    return p.filename().string();
+    fs::path p = ledbasic::pathFromUtf8(lastFile_);
+    if (FileBrowserModel::normalize(ledbasic::utf8FromPath(p.parent_path())) != browseDir_) return "";
+    return ledbasic::utf8FromPath(p.filename());
 }
 
 void App::rememberFile(const std::string& path) {
     lastFile_ = FileBrowserModel::normalize(path);
-    browseDir_ = FileBrowserModel::normalize(fs::path(lastFile_).parent_path().string());
+    browseDir_ = FileBrowserModel::normalize(ledbasic::utf8FromPath(ledbasic::pathFromUtf8(lastFile_).parent_path()));
 }
 
 void App::showOpenDialog() {
@@ -555,7 +557,7 @@ void App::showOpenDialog() {
 
 void App::showSaveDialog() {
     closeMenus();
-    std::string name = filePath_.empty() ? "untitled.bas" : fs::path(filePath_).filename().string();
+    std::string name = filePath_.empty() ? "untitled.bas" : ledbasic::utf8FromPath(ledbasic::pathFromUtf8(filePath_).filename());
     saveBrowser_->show(browseDir_, lastFileInBrowseDir(), filePath_, name);
     showSaveAs_ = true;
     saveBrowser_->TakeFocus();

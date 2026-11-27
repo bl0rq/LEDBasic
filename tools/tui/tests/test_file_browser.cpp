@@ -1,8 +1,20 @@
 #include "file_browser_model.h"
 #include "tui_test.h"
+#include "Utf8Path.h"
 
 #include <filesystem>
 #include <fstream>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <sddl.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -33,6 +45,39 @@ void buildTree() {
     writeFile(treeRoot() / "c.bas", "setup\n\tclear()\nend\n");
     writeFile(treeRoot() / "big.bas", std::string(FileBrowserModel::kMaxPreviewBytes + 1, 'x'));
     writeFile(treeRoot() / "bin.dat", std::string("ab\0cd", 5));
+}
+
+// Folders and files outside buildTree(), so the listing tests stay as they are.
+fs::path extraRoot() {
+    return fs::temp_directory_path() / "ledbasic_tui_browser_extra";
+}
+
+#ifdef _WIN32
+bool setDacl(const fs::path& p, const wchar_t* sddl) {
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &sd, nullptr)) return false;
+    BOOL ok = SetFileSecurityW(p.c_str(), DACL_SECURITY_INFORMATION, sd);
+    LocalFree(sd);
+    return ok != FALSE;
+}
+#endif
+
+// Makes dir unreadable. False when this platform/user can't (e.g. root).
+bool lockDir(const fs::path& dir) {
+#ifdef _WIN32
+    return setDacl(dir, L"D:P(D;OICI;FA;;;WD)");
+#else
+    if (geteuid() == 0) return false;
+    return chmod(dir.c_str(), 0) == 0;
+#endif
+}
+
+void unlockDir(const fs::path& dir) {
+#ifdef _WIN32
+    setDacl(dir, L"D:(A;OICI;FA;;;WD)");
+#else
+    chmod(dir.c_str(), 0755);
+#endif
 }
 
 std::string names(const FileBrowserModel& m) {
@@ -124,6 +169,55 @@ void testPreview() {
     CHECK(p.kind == FilePreview::Error, "preview: missing file is an error");
 }
 
+void testUnreadableFolder() {
+    fs::path locked = extraRoot() / "locked";
+    fs::create_directories(locked);
+    writeFile(locked / "secret.bas", "setup\nend\n");
+    if (!lockDir(locked)) {
+        std::printf("  note: cannot make a folder unreadable here, skipping\n");
+        return;
+    }
+    std::string lockedPath = FileBrowserModel::normalize(ledbasic::genericUtf8FromPath(locked));
+    std::vector<FileEntry> entries;
+    std::string error;
+    CHECK(!FileBrowserModel::list(lockedPath, false, entries, &error),
+          "unreadable: list reports failure, not an empty folder");
+    CHECK(!error.empty(), "unreadable: list says why");
+    FileBrowserModel m;
+    m.chdir(root());
+    CHECK(!m.chdir(lockedPath), "unreadable: chdir is refused");
+    CHECK(m.cwd() == root() && !m.error().empty(), "unreadable: stays put and shows the error");
+    unlockDir(locked);
+}
+
+void testLateNulIsBinary() {
+    fs::create_directories(extraRoot());
+    std::string body(5000, 'a');
+    body += '\0';
+    body += "tail\n";
+    writeFile(extraRoot() / "late_nul.bas", body);
+    FilePreview p = FileBrowserModel::preview(
+        ledbasic::genericUtf8FromPath(extraRoot() / "late_nul.bas"), 10);
+    CHECK(p.kind == FilePreview::Binary, "preview: a NUL past the first 4 KB is still binary");
+}
+
+void testUnicodeNames() {
+    // Built from wide/UTF-8 explicitly so the test doesn't depend on the ANSI code page.
+    fs::path dir = extraRoot() / ledbasic::pathFromUtf8("caf\xC3\xA9");
+    fs::create_directories(dir);
+    writeFile(dir / ledbasic::pathFromUtf8("na\xC3\xAFve.bas"), "setup\nend\n");
+    std::string dirUtf8 = FileBrowserModel::normalize(ledbasic::genericUtf8FromPath(dir));
+    CHECK(dirUtf8.find("caf\xC3\xA9") != std::string::npos, "unicode: normalize keeps UTF-8");
+    FileBrowserModel m;
+    CHECK(m.chdir(dirUtf8), "unicode: chdir into a non-ASCII folder");
+    CHECK(names(m) == "na\xC3\xAFve.bas", "unicode: entry names are UTF-8");
+    FilePreview p = FileBrowserModel::preview(m.selectedPath(), 10);
+    CHECK(p.kind == FilePreview::Text && p.lines.size() == 2, "unicode: preview reads the file");
+    m.up();
+    CHECK(m.selectedEntry() && m.selectedEntry()->name == "caf\xC3\xA9",
+          "unicode: up re-selects the non-ASCII folder");
+}
+
 void testRoot() {
     FileBrowserModel m;
     std::string driveRoot = FileBrowserModel::normalize(treeRoot().root_path().string());
@@ -154,5 +248,10 @@ void runFileBrowserTests() {
     testPreview();
     testRoot();
     std::error_code ec;
+    fs::remove_all(extraRoot(), ec);
+    testUnreadableFolder();
+    testLateNulIsBinary();
+    testUnicodeNames();
     fs::remove_all(treeRoot(), ec);
+    fs::remove_all(extraRoot(), ec);
 }

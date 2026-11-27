@@ -47,3 +47,6 @@ add_executable(ledbasic_tui_tests
     tests/test_file_browser.cpp
 )
 target_link_libraries(ledbasic_tui_tests PRIVATE ledbasic_tui_core)
+if(WIN32)
+    target_link_libraries(ledbasic_tui_tests PRIVATE advapi32) # folder ACLs in tests
+endif()

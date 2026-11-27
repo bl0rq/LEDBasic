@@ -1,4 +1,5 @@
 #include "HostSession.h"
+#include "Utf8Path.h"
 #include "Palettes.h"
 
 #include <chrono>
@@ -405,7 +406,7 @@ bool HostSession::loadSource(const std::string& source, const std::string& path)
 }
 
 bool HostSession::loadFile(const std::string& path) {
-    std::ifstream in(path);
+    std::ifstream in(pathFromUtf8(path)); // path is UTF-8
     if (!in) {
         requestStopAndWait();
         std::lock_guard<std::mutex> lock(mu_);

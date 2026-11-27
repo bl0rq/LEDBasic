@@ -1,6 +1,7 @@
 #include "file_browser.h"
 #include "editor.h"
 #include "theme.h"
+#include "Utf8Path.h"
 
 #include <ftxui/component/mouse.hpp>
 
@@ -16,9 +17,9 @@ namespace fs = std::filesystem;
 namespace {
 
 std::string homeDir() {
-    if (const char* h = std::getenv("USERPROFILE")) return h;
-    if (const char* h = std::getenv("HOME")) return h;
-    return "";
+    std::string home = ledbasic::envUtf8("USERPROFILE");
+    if (home.empty()) home = ledbasic::envUtf8("HOME");
+    return home;
 }
 
 std::string sizeLabel(std::uintmax_t n) {
@@ -30,7 +31,7 @@ std::string sizeLabel(std::uintmax_t n) {
 }
 
 bool isBas(const std::string& name) {
-    std::string ext = fs::path(name).extension().string();
+    std::string ext = ledbasic::utf8FromPath(ledbasic::pathFromUtf8(name).extension());
     for (char& c : ext) c = (char)std::tolower((unsigned char)c);
     return ext == ".bas";
 }
@@ -106,18 +107,23 @@ void FileBrowser::openFile(const std::string& path) {
 void FileBrowser::goToPath(std::string text) {
     if (text.empty()) return;
     if (text[0] == '~') text = homeDir() + text.substr(1);
-    fs::path p(text);
-    if (p.is_relative() && !model_.cwd().empty()) p = fs::path(model_.cwd()) / p;
-    std::string full = FileBrowserModel::normalize(p.generic_string());
+    fs::path p = ledbasic::pathFromUtf8(text);
+    if (p.empty()) {
+        status_ = "not found: " + text;
+        return;
+    }
+    if (p.is_relative() && !model_.cwd().empty()) p = ledbasic::pathFromUtf8(model_.cwd()) / p;
+    std::string full = FileBrowserModel::normalize(ledbasic::genericUtf8FromPath(p));
+    fs::path fullPath = ledbasic::pathFromUtf8(full);
 
     std::error_code ec;
-    if (fs::is_directory(full, ec)) {
+    if (fs::is_directory(fullPath, ec)) {
         if (!model_.chdir(full)) status_ = model_.error();
         return;
     }
-    std::string parent = fs::path(full).parent_path().generic_string();
-    std::string file = fs::path(full).filename().string();
-    if (fs::is_regular_file(full, ec)) {
+    std::string parent = ledbasic::genericUtf8FromPath(fullPath.parent_path());
+    std::string file = ledbasic::utf8FromPath(fullPath.filename());
+    if (fs::is_regular_file(fullPath, ec)) {
         model_.chdir(parent);
         model_.selectName(file);
         if (mode_ == Mode::Open) {
@@ -128,7 +134,7 @@ void FileBrowser::goToPath(std::string text) {
         }
         return;
     }
-    if (mode_ == Mode::Save && fs::is_directory(parent, ec)) {
+    if (mode_ == Mode::Save && fs::is_directory(fullPath.parent_path(), ec)) {
         model_.chdir(parent);
         name_ = file;
         nameFocus_ = true;
@@ -146,15 +152,16 @@ void FileBrowser::trySave() {
         status_ = "enter a file name";
         return;
     }
-    if (fs::path(name_).extension().empty()) name_ += ".bas";
+    if (ledbasic::pathFromUtf8(name_).extension().empty()) name_ += ".bas";
     std::string target = model_.pathOf(name_);
     std::error_code ec;
-    if (fs::is_directory(target, ec)) {
+    fs::path targetPath = ledbasic::pathFromUtf8(target);
+    if (fs::is_directory(targetPath, ec)) {
         status_ = name_ + " is a folder";
         return;
     }
-    bool same = !currentFile_.empty() && fs::equivalent(target, currentFile_, ec);
-    if (fs::exists(target, ec) && !same) {
+    bool same = !currentFile_.empty() && fs::equivalent(targetPath, ledbasic::pathFromUtf8(currentFile_), ec);
+    if (fs::exists(targetPath, ec) && !same) {
         confirmPath_ = target;
         prompt_ = Prompt::Confirm;
         return;
@@ -182,6 +189,9 @@ bool FileBrowser::OnEvent(Event event) {
 // Single-line text editing for prompts and the Name field.
 bool FileBrowser::editText(std::string& text, const Event& e) {
     if (e == Event::Backspace) {
+        // Drop the whole last UTF-8 character: its continuation bytes
+        // (10xxxxxx), then its lead byte.
+        while (!text.empty() && ((unsigned char)text.back() & 0xC0) == 0x80) text.pop_back();
         if (!text.empty()) text.pop_back();
         return true;
     }
@@ -327,7 +337,7 @@ Element FileBrowser::renderParent(int width, int height) {
         parentEntries_.clear();
         if (parent != model_.cwd()) FileBrowserModel::list(parent, false, parentEntries_);
     }
-    std::string here = model_.cwd().empty() ? "" : fs::path(model_.cwd()).filename().string();
+    std::string here = model_.cwd().empty() ? "" : ledbasic::utf8FromPath(ledbasic::pathFromUtf8(model_.cwd()).filename());
     if (here.empty()) here = model_.cwd(); // drive root
     Elements rows;
     for (const auto& e : parentEntries_) {
@@ -408,7 +418,7 @@ Element FileBrowser::renderFooter() {
         case Prompt::Path:
             return text(" Go to: " + promptText_ + "█") | color(theme::accent());
         case Prompt::Confirm:
-            return text(" Overwrite " + fs::path(confirmPath_).filename().string() + "? y/n") |
+            return text(" Overwrite " + ledbasic::utf8FromPath(ledbasic::pathFromUtf8(confirmPath_).filename()) + "? y/n") |
                    color(theme::error()) | bold;
         case Prompt::None:
             break;

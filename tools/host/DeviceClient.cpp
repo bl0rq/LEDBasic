@@ -1,4 +1,5 @@
 #include "DeviceClient.h"
+#include "Utf8Path.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -360,13 +361,13 @@ HttpResult DeviceClient::putLed(const DeviceLed& led) const {
 }
 
 std::string deviceUrlPath() {
-    const char* appdata = std::getenv("APPDATA");
-    if (!appdata || !*appdata) return "device.url";
-    return std::string(appdata) + "\\LEDBasic\\device.url";
+    std::string appdata = envUtf8("APPDATA");
+    if (appdata.empty()) return "device.url";
+    return appdata + "\\LEDBasic\\device.url";
 }
 
 bool loadDeviceUrl(std::string& url) {
-    std::ifstream in(deviceUrlPath());
+    std::ifstream in(pathFromUtf8(deviceUrlPath()));
     if (!in) return false;
     std::string line;
     std::getline(in, line);
@@ -377,14 +378,10 @@ bool loadDeviceUrl(std::string& url) {
 
 bool saveDeviceUrl(const std::string& url) {
     std::string path = deviceUrlPath();
-#ifdef _WIN32
-    std::string dir = path;
-    size_t slash = dir.find_last_of("\\/");
-    if (slash != std::string::npos) {
-        CreateDirectoryA(dir.substr(0, slash).c_str(), nullptr);
-    }
-#endif
-    std::ofstream out(path);
+    std::filesystem::path file = pathFromUtf8(path);
+    std::error_code ec;
+    if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path(), ec);
+    std::ofstream out(file);
     if (!out) return false;
     out << url;
     return (bool)out;

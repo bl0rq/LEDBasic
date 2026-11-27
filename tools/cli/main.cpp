@@ -1,3 +1,4 @@
+#include "Utf8Path.h"
 #include "HostSession.h"
 
 #include <cstdio>
@@ -52,7 +53,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const char* path = argv[2];
+    std::string pathArg = ledbasic::utf8Args(argc, argv)[2]; // UTF-8
+    const char* path = pathArg.c_str();
     int leds = ledbasic::HostSession::kDefaultLeds;
     int frames = 5;
     unsigned dt = ledbasic::HostSession::kDefaultFrameDtMs;

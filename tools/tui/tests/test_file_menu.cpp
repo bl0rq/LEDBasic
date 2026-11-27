@@ -1,5 +1,8 @@
 #include "app.h"
 #include "tui_test.h"
+#include "Utf8Path.h"
+
+#include <cstdlib>
 
 #include <filesystem>
 #include <fstream>
@@ -393,6 +396,69 @@ void testSaveFails() {
 #endif
 }
 
+void setHomeUtf8(const std::string& utf8) {
+#ifdef _WIN32
+    _wputenv_s(L"USERPROFILE", ledbasic::pathFromUtf8(utf8).c_str());
+#else
+    setenv("HOME", utf8.c_str(), 1);
+#endif
+}
+
+void testUnicodePaths() {
+    const std::string cafe = "caf\xC3\xA9";            // café
+    const std::string naive = "na\xC3\xAFve.bas";      // naïve.bas
+    fs::path dir = tempDir() / ledbasic::pathFromUtf8(cafe);
+    fs::create_directories(dir);
+    std::ofstream(dir / ledbasic::pathFromUtf8(naive)) << kNewProgram;
+    std::string dirUtf8 = FileBrowserModel::normalize(ledbasic::genericUtf8FromPath(dir));
+
+    // Open by typed path: the UTF-8 path must reach the filesystem intact.
+    auto app = makeApp("");
+    press(*app, Event::CtrlO);
+    press(*app, Event::CtrlL);
+    for (int i = 0; i < 300; i++) press(*app, Event::Backspace);
+    typeKeys(*app, dirUtf8 + "/" + naive);
+    press(*app, Event::Return);
+    CHECK(app->filePath() == dirUtf8 + "/" + naive, "unicode: opened the non-ASCII file");
+    CHECK(app->editor().getText() == kNewProgram, "unicode: file contents loaded");
+
+    // Save As a non-ASCII name: the file on disk has exactly that name.
+    app->editor().TakeFocus();
+    press(*app, Event::Character('#'));
+    CHECK(menuCommand(*app, "Save As"), "unicode: Save As clicked");
+    clearName(*app);
+    typeKeys(*app, "caf\xC3\xA9-2");
+    press(*app, Event::Return);
+    CHECK(fs::exists(dir / ledbasic::pathFromUtf8("caf\xC3\xA9-2.bas")),
+          "unicode: saved under the exact UTF-8 name");
+    CHECK(!app->editor().dirty(), "unicode: save reported success");
+
+    // ~ goes to a non-ASCII home folder without throwing.
+    setHomeUtf8(ledbasic::utf8FromPath(dir));
+    press(*app, Event::CtrlO);
+    press(*app, Event::CtrlL);
+    for (int i = 0; i < 300; i++) press(*app, Event::Backspace);
+    typeKeys(*app, "~");
+    press(*app, Event::Return);
+    CHECK(openModel(*app).cwd() == dirUtf8, "unicode: ~ opens a non-ASCII home folder");
+    press(*app, Event::Escape);
+}
+
+void testBackspaceUtf8() {
+    auto app = makeApp("");
+    press(*app, Event::CtrlS);
+    clearName(*app);
+    typeKeys(*app, "ab");
+    press(*app, Event::Character("\xC3\xA9"));      // é (2 bytes)
+    press(*app, Event::Character("\xE2\x82\xAC"));  // € (3 bytes)
+    CHECK(app->saveBrowser().name() == "ab\xC3\xA9\xE2\x82\xAC", "utf8 backspace: typed name");
+    press(*app, Event::Backspace);
+    CHECK(app->saveBrowser().name() == "ab\xC3\xA9", "utf8 backspace: removes all of the 3-byte char");
+    press(*app, Event::Backspace);
+    CHECK(app->saveBrowser().name() == "ab", "utf8 backspace: removes all of the 2-byte char");
+    press(*app, Event::Escape);
+}
+
 void testExit() {
     auto app = makeApp();
     bool exited = false;
@@ -423,6 +489,19 @@ void runFileMenuTests() {
     testSaveAsSameFileNoPrompt();
     testSaveExisting();
     testSaveFails();
+    {
+        std::string savedHome = ledbasic::envUtf8("USERPROFILE");
+        std::string savedPosixHome = ledbasic::envUtf8("HOME");
+        testUnicodePaths();
+#ifdef _WIN32
+        setHomeUtf8(savedHome);
+#else
+        setHomeUtf8(savedPosixHome);
+#endif
+        (void)savedPosixHome;
+        (void)savedHome;
+    }
+    testBackspaceUtf8();
     testExit();
 
     fs::remove_all(tempDir(), ec);
