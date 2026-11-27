@@ -1,6 +1,8 @@
 #include "app.h"
 #include "tui_test.h"
 
+#include <fstream>
+#include <iterator>
 #include <memory>
 
 using namespace ftxui;
@@ -214,9 +216,34 @@ void testSpeedAndLedKeys() {
 
 } // namespace
 
+// Device > Programs > Open loads the board's text as is, which may be CRLF.
+// Starting from Stopped reloads from the editor (which drops CRs), so F5 at
+// the breakpoint must still continue rather than restart.
+void testF5ContinuesWithCrlfSource() {
+    std::ifstream in(defaultProgramPath(), std::ios::binary);
+    std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::string crlf;
+    for (char c : body) {
+        if (c == '\r') continue;
+        if (c == '\n') crlf += '\r';
+        crlf += c;
+    }
+    auto app = makeApp("");
+    app->editor().setText(crlf);
+    app->session().loadSource(crlf, "");
+    app->editor().goToLine(kSethsvLine);
+    press(*app, Event::F9);
+    press(*app, Event::F5);
+    CHECK(pausedOnWithI(*app, kSethsvLine, 0), "crlf: first hit");
+    press(*app, Event::F5);
+    CHECK(pausedOnWithI(*app, kSethsvLine, 1), "crlf: F5 continues instead of restarting");
+    app->session().stop();
+}
+
 void runAppTests() {
     testManualChecklist();
     testF5AfterEditRestarts();
+    testF5ContinuesWithCrlfSource();
     testLoadErrorReported();
     testNewAndExit();
     testSpeedAndLedKeys();

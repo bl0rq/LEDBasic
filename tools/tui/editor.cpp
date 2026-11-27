@@ -24,7 +24,7 @@ bool isFuncToken(TokenType t) {
            t == TOK_FLOOR || t == TOK_CEIL || t == TOK_ROUND || t == TOK_MIN ||
            t == TOK_MAX || t == TOK_RANDOM || t == TOK_MAP || t == TOK_MILLIS ||
            t == TOK_DELAY || t == TOK_HSV_TO_RGB || t == TOK_WHEEL ||
-           t == TOK_SETLED || t == TOK_SETCOLOR || t == TOK_SETHSV || t == TOK_SHOW ||
+           t == TOK_SETLED || t == TOK_SETCOLOR || t == TOK_SETHSV || t == TOK_SETPAL || t == TOK_SHOW ||
            t == TOK_CLEAR || t == TOK_FILL || t == TOK_BRIGHTNESS || t == TOK_NUMLED ||
            t == TOK_HSV || t == TOK_RGB || t == TOK_GET_LED_R || t == TOK_GET_LED_G ||
            t == TOK_GET_LED_B || t == TOK_SET_LED || t == TOK_SET_ALL ||

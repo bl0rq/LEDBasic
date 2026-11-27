@@ -154,6 +154,9 @@ private:
     bool deviceProgramsReady_ = false;
     std::vector<ledbasic::DeviceProgram> deviceProgramsIncoming_;
     bool deviceLedReady_ = false;
+    bool deviceKnobsReady_ = false;
+    int deviceKnobsMaster_ = 255;
+    int deviceKnobsPalette_ = -1;
     ledbasic::DeviceLed deviceLedIncoming_;
     bool deviceOpenReady_ = false;
     std::string deviceOpenName_;

@@ -170,6 +170,11 @@ void App::applyDeviceStatus(const ledbasic::DeviceStatus& status) {
     }
     std::string program = status.unsaved ? "unsaved" : status.program;
     deviceStatusLive_ = jobDevice_.baseUrl + " " + status.mode + " " + program;
+    // The board's dimmer and palette win over the TUI's controls; the UI
+    // thread applies them in drainDeviceResults().
+    deviceKnobsMaster_ = status.master;
+    deviceKnobsPalette_ = findPalette(status.palette.c_str());
+    deviceKnobsReady_ = true;
     if (!status.fault.empty()) deviceLogs_.push_back(status.fault);
 }
 
@@ -287,15 +292,16 @@ void App::saveLeds() {
         pushLog("invalid LED settings");
         return;
     }
-    bool hardware = !hasLoadedLed_ || led.type != loadedLed_.type || led.order != loadedLed_.order ||
-                    led.length != loadedLed_.length || led.pin != loadedLed_.pin;
-    startDeviceJob([this, led, hardware] {
+    startDeviceJob([this, led] {
         ledbasic::HttpResult result = jobDevice_.putLed(led);
         if (!httpOk(result)) {
             deviceNote(ledbasic::deviceResultMessage(result));
             return;
         }
-        if (hardware || ledbasic::deviceWillRestart(result)) {
+        // The board says when it restarts (hardware change, or leaving
+        // length measurement); don't guess from the fields.
+        bool restart = ledbasic::deviceWillRestart(result);
+        if (restart) {
             deviceNote("board restarting, reconnect in a few seconds");
         } else {
             deviceNote("brightness " + std::to_string(led.brightness));
@@ -305,7 +311,7 @@ void App::saveLeds() {
             deviceLedIncoming_ = led;
             deviceLedReady_ = true;
         }
-        if (!hardware) refreshDeviceStatus();
+        if (!restart) refreshDeviceStatus();
     });
 }
 
@@ -319,9 +325,18 @@ void App::drainDeviceResults() {
     ledbasic::DeviceLed led;
     std::string openName;
     std::string openSource;
+    bool takeKnobs = false;
+    int knobsMaster = 255;
+    int knobsPalette = -1;
     {
         std::lock_guard<std::mutex> lock(deviceMu_);
         logs.swap(deviceLogs_);
+        if (deviceKnobsReady_) {
+            knobsMaster = deviceKnobsMaster_;
+            knobsPalette = deviceKnobsPalette_;
+            deviceKnobsReady_ = false;
+            takeKnobs = true;
+        }
         if (!deviceStatusLive_.empty()) deviceLine_ = deviceStatusLive_;
         if (deviceProgramsReady_) {
             programs.swap(deviceProgramsIncoming_);
@@ -341,6 +356,20 @@ void App::drainDeviceResults() {
         }
     }
     for (const auto& line : logs) pushLog(line);
+    if (takeKnobs) {
+        // Set the controls and the simulator directly, not through the
+        // slider's on_change, so nothing is sent back to the board. Skip a
+        // control the user has a newer value queued for.
+        if (deviceBrightTarget_.load() < 0 && knobsMaster >= 0 && knobsMaster <= 255) {
+            brightnessValue_ = knobsMaster;
+            session_.setMasterBrightness(knobsMaster);
+        }
+        if (devicePaletteTarget_.load() < 0 && knobsPalette >= 0 &&
+            paletteIndex_ == session_.palette()) {
+            paletteIndex_ = knobsPalette;
+            session_.setPalette(knobsPalette);
+        }
+    }
     if (takePrograms) {
         devicePrograms_ = std::move(programs);
         if (deviceIndex_ >= (int)devicePrograms_.size()) {

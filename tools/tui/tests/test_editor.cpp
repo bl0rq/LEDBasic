@@ -120,6 +120,20 @@ void testBreakpoints() {
     CHECK(changes == 2, "onBreakpointChanged fires on every toggle");
 }
 
+// Foreground color of the first cell of a highlighted line.
+ftxui::Color firstCellColor(const std::string& line) {
+    auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(30), ftxui::Dimension::Fixed(1));
+    ftxui::Render(screen, highlightBasicLine(line));
+    return screen.PixelAt(0, 0).foreground_color;
+}
+
+void testHighlightSetpal() {
+    CHECK(firstCellColor("setpal(0, 128)") == firstCellColor("sethsv(0, 0, 0, 0)"),
+          "setpal is highlighted like the other LED functions");
+    CHECK(!(firstCellColor("setpal(0, 128)") == firstCellColor("foo(0, 128)")),
+          "setpal is not plain text");
+}
+
 void testRender() {
     auto e = makeEditor("setup\n  clear()\nend");
     e->setBreakpoints({2});
@@ -164,6 +178,7 @@ void runEditorTests() {
     testUndo();
     testReadOnly();
     testBreakpoints();
+    testHighlightSetpal();
     testRender();
     testRenderScrollsToCaret();
     testMouse();
