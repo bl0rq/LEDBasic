@@ -438,6 +438,36 @@ static void testInterruptStopsLoop() {
     c.setDebugHook(nullptr, nullptr);
 }
 
+static void testBrightnessResetsBetweenPrograms() {
+    CRGB leds[4];
+    const char* dim = "setup\n  brightness(30)\nend\nloop(time)\n  show()\nend\n";
+    const char* plain = "setup\nend\nloop(time)\n  show()\nend\n";
+
+    // A sketch's own brightness is untouched until the interpreter sets one.
+    FastLED.setBrightness(64);
+    BasicLEDController sketch(leds, 4);
+    CHECK(sketch.loadProgram(String(plain)), "brightness: plain program loads");
+    sketch.runSetup();
+    CHECK(FastLED.brightness == 64, "brightness: sketch brightness kept when no program sets one");
+
+    BasicLEDController c(leds, 4);
+    CHECK(c.loadProgram(String(dim)), "brightness: dim program loads");
+    c.runSetup();
+    CHECK(FastLED.brightness == 30, "brightness: brightness(30) applied");
+
+    CHECK(c.loadProgram(String(plain)), "brightness: plain program reloads");
+    c.runSetup();
+    CHECK(FastLED.brightness == 255, "brightness: next program starts at full, not 30");
+
+    c.setMasterBrightness(128);
+    CHECK(c.loadProgram(String(dim)), "brightness: dim program reloads");
+    c.runSetup();
+    CHECK(FastLED.brightness == 30 * 128 / 255, "brightness: brightness(30) scaled by master");
+    CHECK(c.loadProgram(String(plain)), "brightness: plain program reloads under master");
+    c.runSetup();
+    CHECK(FastLED.brightness == 128, "brightness: next program starts at master, not 30 x master");
+}
+
 int main() {
     testPalettes();
     testParams();
@@ -457,6 +487,7 @@ int main() {
     testSnippetEval();
     testRuntimeDiagnostic();
     testInterruptStopsLoop();
+    testBrightnessResetsBetweenPrograms();
 
     std::printf("%d passed, %d failed\n", gPass, gFails);
     return gFails ? 1 : 0;

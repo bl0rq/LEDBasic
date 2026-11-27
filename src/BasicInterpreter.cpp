@@ -991,7 +991,8 @@ static bool isDebuggableStatement(NodeType t) {
 
 BasicInterpreter::BasicInterpreter(CRGB* ledArray, int ledCount)
     : leds(ledArray), numLeds(ledCount), showCalled(false), ownsPhysicalOutput(true),
-      autoShow(true), outputBrightness(255), masterBrightness(255), paletteIndex(0), setupNode(nullptr), loopNode(nullptr),
+      autoShow(true), outputBrightness(255), masterBrightness(255), paletteIndex(0), drivesPhysicalBrightness(false),
+      setupNode(nullptr), loopNode(nullptr),
       abortExecution(false), currentLine(0), currentColumn(0), statementDepth(0),
       millisFn(ledbasicDefaultMillis), delayFn(ledbasicDefaultDelay), clockUser(nullptr),
       debugHook(nullptr), debugHookUser(nullptr) {
@@ -1033,6 +1034,11 @@ void BasicInterpreter::reset() {
     internName("E");
     slots[nameToSlot["PI"]] = Value((float)M_PI);
     slots[nameToSlot["E"]] = Value((float)M_E);
+    // A new program starts at full output brightness. If the previous program
+    // (or the master dimmer) set FastLED's brightness, put it back to
+    // 255 x master now; otherwise a program that never calls brightness()
+    // would inherit the previous program's level.
+    if (drivesPhysicalBrightness) applyPhysicalBrightness();
 }
 
 unsigned long BasicInterpreter::hostMillis() const {
@@ -1782,6 +1788,7 @@ void BasicInterpreter::setPalette(int index) {
 
 void BasicInterpreter::applyPhysicalBrightness() {
     if (!ownsPhysicalOutput) return;
+    drivesPhysicalBrightness = true;
     uint8_t master = masterBrightness.load(std::memory_order_relaxed);
     uint8_t scaled = (uint8_t)(((uint16_t)outputBrightness * master) / 255);
     FastLED.setBrightness(scaled);

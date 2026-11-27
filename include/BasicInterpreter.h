@@ -417,6 +417,9 @@ private:
     uint8_t outputBrightness;
     std::atomic<uint8_t> masterBrightness;
     std::atomic<int> paletteIndex;
+    // True once this interpreter has set FastLED's brightness (via brightness()
+    // or the master dimmer). Until then a sketch's own setBrightness() is left alone.
+    bool drivesPhysicalBrightness;
     void applyPhysicalBrightness();
     ASTNode* setupNode;
     ASTNode* loopNode;
