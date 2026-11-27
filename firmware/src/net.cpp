@@ -586,6 +586,9 @@ static void handleLedPut() {
         sendError(400, error.c_str(), nullptr);
         return;
     }
+    // Measuring boots with a kMaxLeds buffer, so leaving it always needs a
+    // restart to come back up at the configured length.
+    bool wasMeasuring = gCfg->measuring;
     bool hardware = next.ledType != gCfg->ledType || next.colorOrder != gCfg->colorOrder ||
                     next.length != gCfg->length || next.pin != gCfg->pin;
     if (hasBrightness) {
@@ -601,7 +604,8 @@ static void handleLedPut() {
         return;
     }
     gMasterSaveAt = 0;
-    if (hardware) {
+    gMeasureSaveAt = 0;
+    if (hardware || wasMeasuring) {
         Serial.printf("LED %s %s pin %d x %d, restarting\n",
                       gCfg->ledType.c_str(), gCfg->colorOrder.c_str(), gCfg->pin, gCfg->length);
         sendRestarting();
@@ -767,10 +771,11 @@ static bool wantsActivate() {
 }
 
 // Persists `source` under `name` and, if requested, activates it.
-// When activating, validate and apply the program *before* writing it to
-// disk: this way an invalid replacement never overwrites the file backing
-// the currently-active program (a stale invalid file would otherwise only
-// surface as a boot failure after a later restart).
+// When activating, the program must parse *before* it is written to disk, so
+// an invalid replacement never overwrites the file backing the active
+// program (it would otherwise only surface as a boot failure after a later
+// restart). When the device is busy the apply itself is queued, so the parse
+// check is the only gate before the write.
 static void saveAndRespond(const String& name, const String& source) {
     String error;
     if (!wantsActivate()) {
@@ -786,11 +791,15 @@ static void saveAndRespond(const String& name, const String& source) {
         sendError(400, error.c_str(), nullptr);
         return;
     }
+    std::vector<OutputDiag> diags;
+    if (!outputCheck(source, diags)) {
+        sendError(400, "program rejected", &diags);
+        return;
+    }
     ApplyResult result = applyOrQueue(name, source, true);
     if (result.ok) {
-        // Not busy: we have a definitive result, so only persist on success.
-        // Busy (pending): the apply is queued for later; persist optimistically
-        // since outputLoad() still falls back safely in memory if it fails.
+        // Not busy: the program loaded, so persist it.
+        // Busy (pending): it parsed, so it will load; persist it now.
         if (!writeUserProgramFile(name, source, error)) {
             result.ok = false;
             result.error = error;
@@ -933,8 +942,10 @@ static bool readWifi(String& ssid, String& password, String& error) {
             error = "invalid json";
             return false;
         }
-        ssid = doc["ssid"].as<String>();
-        password = doc["password"].as<String>();
+        // `| ""` yields "" for a missing, null or non-string field; as<String>()
+        // would serialize those to the literal "null".
+        ssid = doc["ssid"] | "";
+        password = doc["password"] | "";
     } else {
         ssid = gServer.arg("ssid");
         password = gServer.arg("password");

@@ -249,9 +249,14 @@ bool validateUserProgram(const String& name, const String& source, String& error
     return true;
 }
 
+// Writes to a temporary file and renames it over the destination only after
+// the whole source is on flash, so a failed write (e.g. storage full) never
+// destroys an existing program. "<name>.tmp" is not a valid program name, so
+// a leftover temp file is never listed or counted.
 bool writeUserProgramFile(const String& name, const String& source, String& error) {
     String path = programPath(name);
-    File file = LittleFS.open(path, "w");
+    String tmp = "/programs/" + name + ".tmp";
+    File file = LittleFS.open(tmp, "w");
     if (!file) {
         error = "storage failed";
         return false;
@@ -259,7 +264,13 @@ bool writeUserProgramFile(const String& name, const String& source, String& erro
     size_t wrote = file.print(source);
     file.close();
     if (wrote != source.length()) {
-        LittleFS.remove(path);
+        LittleFS.remove(tmp);
+        error = "storage full";
+        return false;
+    }
+    // littlefs's rename atomically replaces an existing destination file.
+    if (!LittleFS.rename(tmp, path)) {
+        LittleFS.remove(tmp);
         error = "storage failed";
         return false;
     }

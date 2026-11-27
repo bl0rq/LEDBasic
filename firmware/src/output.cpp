@@ -148,20 +148,37 @@ void outputNoteFrame() {
     }
 }
 
+static void appendDiags(const std::vector<Diagnostic>& found, std::vector<OutputDiag>& diags) {
+    for (size_t i = 0; i < found.size(); i++) {
+        OutputDiag diag;
+        diag.line = found[i].line;
+        diag.column = found[i].column;
+        diag.message = found[i].message;
+        diags.push_back(diag);
+    }
+}
+
+// Mirrors the accept/reject rule in BasicLEDController::loadProgram.
+bool outputCheck(const String& source, std::vector<OutputDiag>& diags) {
+    diags.clear();
+    BasicLexer lexer(source);
+    std::vector<Token> tokens = lexer.tokenize();
+    appendDiags(lexer.getDiagnostics(), diags);
+    BasicParser parser(tokens);
+    ASTNode* ast = parser.parse();
+    appendDiags(parser.getDiagnostics(), diags);
+    bool ok = !lexer.hasError() && ast && !parser.hasError();
+    delete ast;
+    return ok;
+}
+
 bool outputLoad(const String& source, std::vector<OutputDiag>& diags) {
     diags.clear();
     if (!gController) return false;
     netSetBusy(true);
     gController->interrupt();
     if (!gController->loadProgram(source)) {
-        std::vector<Diagnostic> found = gController->getDiagnostics();
-        for (size_t i = 0; i < found.size(); i++) {
-            OutputDiag diag;
-            diag.line = found[i].line;
-            diag.column = found[i].column;
-            diag.message = found[i].message;
-            diags.push_back(diag);
-        }
+        appendDiags(gController->getDiagnostics(), diags);
         if (gGoodSource.length() > 0 && gController->loadProgram(gGoodSource)) {
             gController->runSetup();
         }
