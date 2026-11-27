@@ -1,26 +1,8 @@
-// Generated from examples/bas/Wipe.bas by tools/gen_examples.cmake. Do not edit.
 #pragma once
 
 namespace Wipe {
-constexpr char program[] = R"BAS(# Inspired by a WLED effect of the same name. The idea is theirs; this sketch is ours.
-
-param speed number(30.0, 5.0, 150.0, 5.0)
-param hue number(140.0, 0.0, 360.0, 5.0)
-
-setup
-  brightness(128)
-end
-
-loop(time)
-  head = floor(time / speed) % (numled() + 8)
-  for i = 0 to numled()-1
-    if i <= head
-      sethsv(i, hue, 255, 255)
-    else
-      sethsv(i, hue, 255, 0)
-    end
-  next
-  show()
-end
-)BAS";
+constexpr char program[] = {
+#embed "../../examples/bas/Wipe.bas"
+, 0
+};
 }
