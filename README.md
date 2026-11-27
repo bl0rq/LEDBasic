@@ -1,6 +1,6 @@
 # LEDBasic
 
-A **BASIC language interpreter** for programming LED animations with [FastLED](https://github.com/FastLED/FastLED). Features virtual strip layering with blend modes, runtime parameter discovery, serial command interface, and 10 ready-to-use example programs. Designed as a PlatformIO library for easy integration into LED projects.
+A **BASIC language interpreter** for programming LED animations with [FastLED](https://github.com/FastLED/FastLED). Features virtual strip layering with blend modes, runtime parameter discovery, serial command interface, and 63 ready-to-use example programs. Designed as a PlatformIO library for easy integration into LED projects.
 
 ## Features
 
@@ -9,9 +9,11 @@ A **BASIC language interpreter** for programming LED animations with [FastLED](h
 - **Virtual Strip Manager** — Layer multiple BASIC programs on overlapping regions of a physical LED strip with Z-ordering and blend modes (replace, add, subtract, multiply, screen). Replace treats black as transparent so lower layers show through.
 - **Serial Command Handler** — Built-in serial interface for switching programs and adjusting parameters at runtime
 - **Standalone Effects** — Optional extras (`#include "Effects.h"`) for color-wheel / demo-reel tests. Not pulled in by `LEDBasic.h`.
-- **Example Programs** — 10 ready-to-use BASIC programs: Rainbow, Breathing, SineWave, DoubleRainbow, Matrix, BackgroundStars, MovingComets, PulsingCenter, BikeParked, BikeRolling
+- **Example Programs** — 63 ready-to-use BASIC programs in `examples/bas`, each available as `BasicExamples/<Name>.h` (Rainbow, Fire, Pacifica, Plasma, Twinkle, ...)
 
 ## Installation
+
+**Compiler requirement:** the `BasicExamples/*.h` headers load their `.bas` files with C23 `#embed`, which needs **GCC 15+ or Clang 19+**. The stock `espressif32` PlatformIO platform ships an older GCC; the firmware in `firmware/` uses the [Tasmota espressif32 platform](https://github.com/tasmota/platform-espressif32) (GCC 15.2). The interpreter itself needs only C++17, so a project that doesn't include `BasicExamples/` builds on older compilers.
 
 ### PlatformIO (recommended)
 
@@ -140,7 +142,7 @@ Write and debug programs in the terminal without a board.
 
 **From VS Code:** `Ctrl+Shift+B` builds, `F5` builds and opens **LEDBasic TUI in a new console window** (Windows Terminal if you have it). It is a terminal app, not a GUI. If an old F5 left the status bar orange, `Shift+F5` stops that session first. Details: [tools/README.md](tools/README.md).
 
-**From a shell:** CMake + a C++17 compiler (MSYS2 `g++` on Windows; `g++`/`clang++` on Linux/macOS):
+**From a shell:** CMake + GCC 15+ or Clang 19+ for `#embed` (MSYS2 `g++` on Windows; `g++`/`clang++` on Linux/macOS):
 
 ```
 pwsh -File tools/build.ps1   # Windows
