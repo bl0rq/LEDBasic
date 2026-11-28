@@ -178,12 +178,19 @@ function flushBright() {
     headers: { "Content-Type": "application/json", "Accept": "application/json" },
     body: JSON.stringify({ brightness: value })
   }).then(function (response) { return response.json(); }).then(function (data) {
-    brightSent = value;
     brightBusy = false;
-    if (!data.ok) showError(data.error || "could not set brightness");
-    flushBright();
+    if (data.ok) {
+      brightSent = value;
+      showError("");
+      flushBright();
+    } else {
+      if (brightWant === value) brightWant = brightSent;
+      showError(data.error || "could not set brightness");
+      brightSettled();
+    }
   }).catch(function () {
     brightBusy = false;
+    if (brightWant === value) brightWant = brightSent;
     showError("could not set brightness");
     brightSettled();
   });
@@ -195,8 +202,8 @@ function queueBright() {
   flushBright();
 }
 bright.addEventListener("pointerdown", function () { brightDown = true; brightHold = true; });
-bright.addEventListener("pointerup", function () { brightDown = false; brightSettled(); });
-bright.addEventListener("pointercancel", function () { brightDown = false; brightSettled(); });
+window.addEventListener("pointerup", function () { brightDown = false; brightSettled(); });
+window.addEventListener("pointercancel", function () { brightDown = false; brightSettled(); });
 bright.addEventListener("input", queueBright);
 bright.addEventListener("change", queueBright);
 
@@ -248,7 +255,9 @@ function showError(text) {
   node.textContent = text || "";
   node.classList.toggle("hidden", !text);
 }
+var restarting = false;
 function showRestart() {
+  restarting = true;
   document.getElementById("restart").classList.remove("hidden");
   setTimeout(function () { location.reload(); }, 8000);
 }
@@ -258,8 +267,10 @@ function draw(colors) {
   var width = strip.clientWidth || 320;
   var height = 28;
   var ratio = window.devicePixelRatio || 1;
-  strip.width = Math.round(width * ratio);
-  strip.height = Math.round(height * ratio);
+  var targetW = Math.round(width * ratio);
+  var targetH = Math.round(height * ratio);
+  if (strip.width !== targetW) strip.width = targetW;
+  if (strip.height !== targetH) strip.height = targetH;
   var g = strip.getContext("2d");
   g.setTransform(ratio, 0, 0, ratio, 0, 0);
   g.clearRect(0, 0, width, height);
@@ -292,10 +303,13 @@ function paintStatus(data) {
   if (paletteReady && data.palette && document.activeElement !== palette) {
     palette.value = data.palette;
   }
-  var shown = (data.unsaved ? "unsaved:" : "saved:") + (data.program || "");
+  var shown = data.loadId != null
+    ? ("id:" + data.loadId)
+    : ((data.unsaved ? "unsaved:" : "saved:") + (data.program || ""));
   if (shown !== paramProgram) {
     paramProgram = shown;
     loadParams();
+    loadPrograms().catch(function () {});
   }
 }
 
@@ -320,6 +334,7 @@ function report(data) {
     loadPrograms().catch(function () {});
     refresh();
     loadParams();
+    if (data.pending) setTimeout(refresh, 150);
     return;
   }
   var message = data.error || "request failed";
@@ -385,9 +400,16 @@ function setParam(name, value) {
     headers: { "Content-Type": "application/json", "Accept": "application/json" },
     body: JSON.stringify({ name: name, value: value })
   }).then(function (response) { return response.json(); }).then(function (data) {
-    if (!data.ok) showError(data.error || "could not set parameter");
-    else showError("");
-  }).catch(function () { showError("could not set parameter"); });
+    if (!data.ok) {
+      showError(data.error || "could not set parameter");
+      return false;
+    }
+    showError("");
+    return true;
+  }).catch(function () {
+    showError("could not set parameter");
+    return false;
+  });
 }
 
 function paramControl(param) {
@@ -427,7 +449,8 @@ function paramControl(param) {
     });
     readout.textContent = (param.values && param.values[param.value]) || "";
     select.addEventListener("change", function () {
-      readout.textContent = select.options[select.selectedIndex].textContent;
+      var opt = select.options[select.selectedIndex];
+      readout.textContent = opt ? opt.textContent : "";
       setParam(param.name, Number(select.value));
     });
     wrap.appendChild(select);
@@ -446,10 +469,14 @@ function paramControl(param) {
     if (lane.busy || lane.want == null || lane.want === lane.sent) return;
     var value = lane.want;
     lane.busy = true;
-    setParam(param.name, value).then(function () {
-      lane.sent = value;
+    setParam(param.name, value).then(function (ok) {
       lane.busy = false;
-      flushRange();
+      if (ok) {
+        lane.sent = value;
+        flushRange();
+      } else if (lane.want === value) {
+        lane.want = lane.sent;
+      }
     });
   }
   function queueRange() {
@@ -546,10 +573,26 @@ document.getElementById("join").addEventListener("submit", function (event) {
   });
 });
 
-function pollScan(button, box) {
-  fetch("/api/wifi/scan").then(function (r) { return r.json(); }).then(function (result) {
+function pollScan(button, box, tries) {
+  if (tries == null) tries = 30;
+  fetch("/api/wifi/scan", { headers: { "Accept": "application/json" } }).then(function (r) {
+    return r.json().then(function (data) { return { ok: r.ok, data: data }; });
+  }).then(function (res) {
+    if (!res.ok) {
+      button.disabled = false;
+      button.textContent = "Scan networks";
+      showError((res.data && res.data.error) || "scan failed");
+      return;
+    }
+    var result = res.data;
     if (!result.done) {
-      setTimeout(function () { pollScan(button, box); }, 400);
+      if (tries <= 0) {
+        button.disabled = false;
+        button.textContent = "Scan networks";
+        showError("scan timed out");
+        return;
+      }
+      setTimeout(function () { pollScan(button, box, tries - 1); }, 400);
       return;
     }
     button.disabled = false;
@@ -619,19 +662,55 @@ document.getElementById("upload").addEventListener("submit", function (event) {
   });
 });
 
+var statusBusy = false;
+var previewBusy = false;
+var statusTimer = null;
+var previewTimer = null;
+function scheduleRefresh(delay) {
+  clearTimeout(statusTimer);
+  if (restarting) return;
+  statusTimer = setTimeout(refresh, delay);
+}
+function schedulePreview(delay) {
+  clearTimeout(previewTimer);
+  if (restarting) return;
+  previewTimer = setTimeout(refreshPreview, delay);
+}
 function refresh() {
-  fetch("/api/status").then(function (r) { return r.json(); }).then(paintStatus).catch(function () {});
+  if (restarting || document.hidden) {
+    scheduleRefresh(2000);
+    return;
+  }
+  if (statusBusy) return;
+  statusBusy = true;
+  fetch("/api/status").then(function (r) { return r.json(); }).then(paintStatus).catch(function () {}).then(function () {
+    statusBusy = false;
+    scheduleRefresh(2000);
+  });
 }
 function refreshPreview() {
-  fetch("/api/preview").then(function (r) { return r.json(); }).then(draw).catch(function () {});
+  if (restarting || document.hidden) {
+    schedulePreview(500);
+    return;
+  }
+  if (previewBusy) return;
+  previewBusy = true;
+  fetch("/api/preview").then(function (r) { return r.json(); }).then(draw).catch(function () {}).then(function () {
+    previewBusy = false;
+    schedulePreview(500);
+  });
 }
+document.addEventListener("visibilitychange", function () {
+  if (!document.hidden && !restarting) {
+    refresh();
+    refreshPreview();
+  }
+});
 loadLeds().catch(function () {});
 loadPalette().catch(function () {});
 loadPrograms().catch(function () {});
 refresh();
 refreshPreview();
-setInterval(refresh, 2000);
-setInterval(refreshPreview, 500);
 </script>
 </body>
 </html>
