@@ -39,6 +39,45 @@ Color tokenColor(TokenType t) {
     return theme::fg();
 }
 
+bool isUtf8Cont(unsigned char c) {
+    return (c & 0xC0) == 0x80;
+}
+
+int clampToCodepoint(const std::string& line, int col) {
+    int len = (int)line.size();
+    if (col < 0) return 0;
+    if (col > len) return len;
+    while (col > 0 && col < len && isUtf8Cont((unsigned char)line[(size_t)col])) col--;
+    return col;
+}
+
+int prevCodepoint(const std::string& line, int col) {
+    col = clampToCodepoint(line, col);
+    if (col <= 0) return 0;
+    col--;
+    while (col > 0 && isUtf8Cont((unsigned char)line[(size_t)col])) col--;
+    return col;
+}
+
+int nextCodepoint(const std::string& line, int col) {
+    int len = (int)line.size();
+    col = clampToCodepoint(line, col);
+    if (col >= len) return len;
+    col++;
+    while (col < len && isUtf8Cont((unsigned char)line[(size_t)col])) col++;
+    return col;
+}
+
+int byteIndexForColumn(const std::string& line, int visualCol) {
+    if (visualCol <= 0) return 0;
+    int pos = 0;
+    int len = (int)line.size();
+    for (int i = 0; i < visualCol && pos < len; i++) {
+        pos = nextCodepoint(line, pos);
+    }
+    return pos;
+}
+
 } // namespace
 
 Element highlightBasicLine(const std::string& raw) {
@@ -136,9 +175,7 @@ void SourceEditor::ensureCursor() {
     if (lines_.empty()) lines_.push_back("");
     if (cursorRow_ < 0) cursorRow_ = 0;
     if (cursorRow_ >= (int)lines_.size()) cursorRow_ = (int)lines_.size() - 1;
-    int len = (int)lines_[(size_t)cursorRow_].size();
-    if (cursorCol_ < 0) cursorCol_ = 0;
-    if (cursorCol_ > len) cursorCol_ = len;
+    cursorCol_ = clampToCodepoint(lines_[(size_t)cursorRow_], cursorCol_);
 }
 
 void SourceEditor::pushUndo() {
@@ -172,8 +209,10 @@ void SourceEditor::backspace() {
     ensureCursor();
     if (cursorCol_ > 0) {
         pushUndo();
-        lines_[(size_t)cursorRow_].erase((size_t)cursorCol_ - 1, 1);
-        cursorCol_--;
+        auto& line = lines_[(size_t)cursorRow_];
+        int prev = prevCodepoint(line, cursorCol_);
+        line.erase((size_t)prev, (size_t)(cursorCol_ - prev));
+        cursorCol_ = prev;
         dirty_ = true;
     } else if (cursorRow_ > 0) {
         pushUndo();
@@ -191,7 +230,8 @@ void SourceEditor::del() {
     auto& line = lines_[(size_t)cursorRow_];
     if (cursorCol_ < (int)line.size()) {
         pushUndo();
-        line.erase((size_t)cursorCol_, 1);
+        int next = nextCodepoint(line, cursorCol_);
+        line.erase((size_t)cursorCol_, (size_t)(next - cursorCol_));
         dirty_ = true;
     } else if (cursorRow_ + 1 < (int)lines_.size()) {
         pushUndo();
@@ -245,7 +285,7 @@ Element SourceEditor::renderLine(int index, int width) const {
     if (isCurrent) body = body | bgcolor(theme::current());
     if (isError) body = body | color(theme::error());
 
-    Element row = hbox(g, body | flex);
+    Element row = hbox(g, body | frame | flex);
     if (index == cursorRow_ && Focused()) {
         row = row | inverted;
     }
@@ -276,19 +316,25 @@ bool SourceEditor::OnEvent(Event event) {
     if (event.is_mouse()) {
         auto m = event.mouse();
         if (!box_.Contain(m.x, m.y)) return false;
+        if (m.button == Mouse::WheelUp || m.button == Mouse::WheelDown) {
+            cursorRow_ += (m.button == Mouse::WheelDown ? 3 : -3);
+            ensureCursor();
+            return true;
+        }
+        if (m.button != Mouse::Left || m.motion != Mouse::Pressed) return false;
         TakeFocus();
         int row = scrollRow_ + (m.y - box_.y_min);
         if (row < 0) row = 0;
         if (row >= (int)lines_.size()) row = (int)lines_.size() - 1;
         cursorRow_ = row;
         int localX = m.x - box_.x_min;
-        if (m.button == Mouse::Left && m.motion == Mouse::Pressed && localX <= 1) {
+        if (localX <= 1) {
             toggleBreakpointAtCursor();
             return true;
         }
         int col = localX - 7;
         if (col < 0) col = 0;
-        cursorCol_ = col;
+        cursorCol_ = byteIndexForColumn(lines_[(size_t)cursorRow_], col);
         ensureCursor();
         return true;
     }
@@ -304,7 +350,8 @@ bool SourceEditor::OnEvent(Event event) {
         return true;
     }
     if (event == Event::ArrowLeft) {
-        if (cursorCol_ > 0) cursorCol_--;
+        ensureCursor();
+        if (cursorCol_ > 0) cursorCol_ = prevCodepoint(lines_[(size_t)cursorRow_], cursorCol_);
         else if (cursorRow_ > 0) {
             cursorRow_--;
             cursorCol_ = (int)lines_[(size_t)cursorRow_].size();
@@ -313,8 +360,9 @@ bool SourceEditor::OnEvent(Event event) {
     }
     if (event == Event::ArrowRight) {
         ensureCursor();
-        if (cursorCol_ < (int)lines_[(size_t)cursorRow_].size()) cursorCol_++;
-        else if (cursorRow_ + 1 < (int)lines_.size()) {
+        if (cursorCol_ < (int)lines_[(size_t)cursorRow_].size()) {
+            cursorCol_ = nextCodepoint(lines_[(size_t)cursorRow_], cursorCol_);
+        } else if (cursorRow_ + 1 < (int)lines_.size()) {
             cursorRow_++;
             cursorCol_ = 0;
         }
@@ -365,7 +413,7 @@ bool SourceEditor::OnEvent(Event event) {
             insert("  ");
             return true;
         }
-        if (!ch.empty() && ch[0] >= 32) {
+        if (!ch.empty() && (unsigned char)ch[0] >= 32) {
             insert(ch);
             return true;
         }

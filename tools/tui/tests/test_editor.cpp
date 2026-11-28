@@ -166,6 +166,34 @@ void testMouse() {
     CHECK(e->breakpoints().count(3) == 1, "click in gutter toggles a breakpoint");
 
     CHECK(!e->OnEvent(click(50, 1)), "click outside the editor is not consumed");
+
+    // Hover / move / release must not move the caret.
+    e->goToLine(1);
+    e->OnEvent(Event::Home);
+    Mouse hover;
+    hover.button = Mouse::None;
+    hover.motion = Mouse::Moved;
+    hover.x = 10;
+    hover.y = 2;
+    CHECK(!e->OnEvent(Event::Mouse("", hover)), "mouse hover is ignored");
+    CHECK(e->cursorLine() == 1 && e->cursorColumn() == 1, "mouse hover does not jump caret");
+}
+
+void testUtf8Editing() {
+    auto e = makeEditor("");
+    e->OnEvent(Event::Character("a"));
+    e->OnEvent(Event::Character("\xC3\xA9"));     // é (2 bytes)
+    e->OnEvent(Event::Character("\xE2\x82\xAC")); // € (3 bytes)
+    e->OnEvent(Event::Character("b"));
+    CHECK(e->getText() == "a\xC3\xA9\xE2\x82\xAC" "b", "utf8: inserts multi-byte characters");
+
+    e->OnEvent(Event::ArrowLeft); // before 'b'
+    e->OnEvent(Event::ArrowLeft); // before '€'
+    e->OnEvent(Event::Delete);    // deletes whole '€'
+    CHECK(e->getText() == "a\xC3\xA9" "b", "utf8: Delete removes whole 3-byte char");
+
+    e->OnEvent(Event::Backspace); // deletes whole 'é'
+    CHECK(e->getText() == "ab", "utf8: Backspace removes whole 2-byte char");
 }
 
 } // namespace
@@ -182,4 +210,5 @@ void runEditorTests() {
     testRender();
     testRenderScrollsToCaret();
     testMouse();
+    testUtf8Editing();
 }
