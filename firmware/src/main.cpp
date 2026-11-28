@@ -32,7 +32,7 @@ void setup() {
 
     Serial.printf("LED %s %s pin %d x %d brightness %d program %s\n",
                   gConfig.ledType.c_str(), gConfig.colorOrder.c_str(), gConfig.pin,
-                  gConfig.length, gConfig.brightness, gConfig.activeProgram.c_str());
+                  gConfig.length, gConfig.master, gConfig.activeProgram.c_str());
 
     int pixels = gConfig.measuring ? kMaxLeds : gConfig.length;
     if (!outputBegin(gConfig.ledType, gConfig.colorOrder, pixels, gConfig.pin, gConfig.master)) {
@@ -40,6 +40,10 @@ void setup() {
     }
     outputSetPalette(gConfig.palette.c_str());
     netBegin(gConfig);
+
+    if (gConfig.measuring) {
+        return;
+    }
 
     ApplyResult boot = netApply(gConfig.activeProgram, source, true);
     if (!boot.ok) {

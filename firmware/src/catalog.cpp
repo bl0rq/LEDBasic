@@ -167,6 +167,8 @@ bool isBuiltin(const String& name) {
     return findBuiltin(name) != nullptr;
 }
 
+static bool gStorageReady = false;
+
 static String programPath(const String& name) {
     return "/programs/" + name + ".bas";
 }
@@ -174,26 +176,30 @@ static String programPath(const String& name) {
 static String fileBaseName(const String& path) {
     int slash = path.lastIndexOf('/');
     String name = slash >= 0 ? path.substring(slash + 1) : path;
-    if (name.endsWith(".bas")) name = name.substring(0, name.length() - 4);
-    return name;
+    if (!name.endsWith(".bas")) return "";
+    return name.substring(0, name.length() - 4);
 }
 
 bool catalogBegin() {
     // Do not auto-format on mount failure: that would silently wipe any
     // stored user programs. Log and continue in builtin-only mode instead;
     // a real recovery requires an explicit, intentional reformat.
+    gStorageReady = false;
     if (!LittleFS.begin(false)) {
         Serial.println("LittleFS mount failed; user programs unavailable (builtins only)");
         return false;
     }
-    if (!LittleFS.exists("/programs")) {
-        LittleFS.mkdir("/programs");
+    if (!LittleFS.exists("/programs") && !LittleFS.mkdir("/programs")) {
+        Serial.println("Failed to create /programs directory; user programs unavailable");
+        return false;
     }
+    gStorageReady = true;
     Serial.println("LittleFS ready");
     return true;
 }
 
 static int countUserPrograms() {
+    if (!gStorageReady) return 0;
     int count = 0;
     File dir = LittleFS.open("/programs");
     if (!dir) return 0;
@@ -215,7 +221,7 @@ bool lookupSource(const String& name, String& out, bool& builtin) {
         builtin = true;
         return true;
     }
-    if (!validProgramName(name)) return false;
+    if (!gStorageReady || !validProgramName(name)) return false;
     File file = LittleFS.open(programPath(name), "r");
     if (!file) return false;
     out = file.readString();
@@ -241,6 +247,10 @@ bool validateUserProgram(const String& name, const String& source, String& error
         error = "program too large";
         return false;
     }
+    if (!gStorageReady) {
+        error = "storage failed";
+        return false;
+    }
     bool replacing = LittleFS.exists(programPath(name));
     if (!replacing && countUserPrograms() >= kMaxUserPrograms) {
         error = "program limit reached";
@@ -254,6 +264,14 @@ bool validateUserProgram(const String& name, const String& source, String& error
 // destroys an existing program. "<name>.tmp" is not a valid program name, so
 // a leftover temp file is never listed or counted.
 bool writeUserProgramFile(const String& name, const String& source, String& error) {
+    if (!validProgramName(name)) {
+        error = "invalid name";
+        return false;
+    }
+    if (!gStorageReady) {
+        error = "storage failed";
+        return false;
+    }
     String path = programPath(name);
     String tmp = "/programs/" + name + ".tmp";
     File file = LittleFS.open(tmp, "w");
@@ -291,6 +309,10 @@ bool deleteUserProgram(const String& name, String& error) {
         error = "built-in program cannot be deleted";
         return false;
     }
+    if (!gStorageReady) {
+        error = "storage failed";
+        return false;
+    }
     String path = programPath(name);
     if (!LittleFS.exists(path)) {
         error = "program not found";
@@ -312,6 +334,7 @@ void listPrograms(std::vector<ProgramInfo>& out) {
         info.bytes = strlen(kBuiltins[i].source);
         out.push_back(info);
     }
+    if (!gStorageReady) return;
     File dir = LittleFS.open("/programs");
     if (!dir) return;
     File file = dir.openNextFile();

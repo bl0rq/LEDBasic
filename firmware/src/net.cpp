@@ -5,6 +5,8 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <ArduinoJson.h>
+#include <cmath>
+#include <cstdlib>
 
 #include "BasicInterpreter.h"
 #include "catalog.h"
@@ -31,6 +33,7 @@ static WifiPhase gPhase = PhaseAp;
 static String gRunningName;
 static bool gRunningBuiltin = false;
 static bool gRunningUnsaved = false;
+static uint32_t gLoadId = 0;
 static std::vector<OutputDiag> gLoadFailure;
 
 static bool gPending = false;
@@ -72,8 +75,68 @@ bool netTakePending(String& name, String& source, bool& remember) {
     return true;
 }
 
+static uint32_t scheduleAfter(uint32_t ms) {
+    uint32_t t = millis() + ms;
+    return t == 0 ? 1 : t;
+}
+
+static bool parseStrictInt(const String& s, int& out) {
+    const char* start = s.c_str();
+    while (*start == ' ' || *start == '\t') start++;
+    if (*start == '\0') return false;
+    char* end = nullptr;
+    long v = strtol(start, &end, 10);
+    if (end == start) return false;
+    while (*end == ' ' || *end == '\t') end++;
+    if (*end != '\0') return false;
+    if (v < -2147483647L - 1L || v > 2147483647L) return false;
+    out = (int)v;
+    return true;
+}
+
+static bool parseStrictFloat(const String& s, float& out) {
+    const char* start = s.c_str();
+    while (*start == ' ' || *start == '\t') start++;
+    if (*start == '\0') return false;
+    char* end = nullptr;
+    float v = strtof(start, &end);
+    if (end == start) return false;
+    while (*end == ' ' || *end == '\t') end++;
+    if (*end != '\0' || !std::isfinite(v)) return false;
+    out = v;
+    return true;
+}
+
+static bool jsonStrictInt(JsonVariant v, int& out) {
+    if (v.isNull() || v.is<bool>()) return false;
+    if (v.is<long>() || v.is<int>()) {
+        long val = v.as<long>();
+        if (val < -2147483647L - 1L || val > 2147483647L) return false;
+        out = (int)val;
+        return true;
+    }
+    return false;
+}
+
+static bool jsonStrictFloat(JsonVariant v, float& out) {
+    if (v.isNull() || v.is<bool>()) return false;
+    if (v.is<double>()) {
+        float val = v.as<float>();
+        if (!std::isfinite(val)) return false;
+        out = val;
+        return true;
+    }
+    return false;
+}
+
+static int storageErrorCode(const String& err) {
+    if (err == "storage full") return 507;
+    if (err == "storage failed") return 500;
+    return 400;
+}
+
 static void requestRestart() {
-    if (gRestartAt == 0) gRestartAt = millis() + 400;
+    if (gRestartAt == 0) gRestartAt = scheduleAfter(400);
 }
 
 static void pollButton() {
@@ -259,7 +322,8 @@ static void sendRestarting() {
 static void sendApply(const ApplyResult& result) {
     if (!result.ok) {
         const char* message = result.error.length() ? result.error.c_str() : "program rejected";
-        sendError(400, message, &result.diagnostics);
+        int code = storageErrorCode(result.error);
+        sendError(code, message, result.diagnostics.empty() ? nullptr : &result.diagnostics);
         return;
     }
     if (result.pending) {
@@ -280,6 +344,7 @@ ApplyResult netApply(const String& name, const String& source, bool remember) {
         return result;
     }
     gLoadFailure.clear();
+    gLoadId++;
     if (remember) {
         gRunningName = name;
         gRunningBuiltin = isBuiltin(name);
@@ -357,6 +422,7 @@ static void handleStatus() {
     doc["program"] = gRunningName;
     doc["builtin"] = gRunningBuiltin;
     doc["unsaved"] = gRunningUnsaved;
+    doc["loadId"] = gLoadId;
     doc["brightness"] = outputMaster();
     doc["palette"] = outputPaletteName();
     doc["fps"] = outputFps();
@@ -390,23 +456,31 @@ static void handleMeasure() {
             sendError(400, "invalid json", nullptr);
             return;
         }
-        action = doc["action"].as<String>();
-        if (!doc["by"].isNull()) by = doc["by"].as<int>();
+        action = doc["action"] | "";
+        if (!doc["by"].isNull() && !jsonStrictInt(doc["by"], by)) {
+            sendError(400, "invalid step", nullptr);
+            return;
+        }
     } else {
         action = gServer.arg("action");
-        if (gServer.hasArg("by")) by = gServer.arg("by").toInt();
+        if (gServer.hasArg("by") && !parseStrictInt(gServer.arg("by"), by)) {
+            sendError(400, "invalid step", nullptr);
+            return;
+        }
     }
     if (action == "start") {
-        if (!gCfg->measuring) {
-            gCfg->measureWas = gCfg->length;
-            gCfg->measureEnd = clampMeasure(gCfg->length);
-            gCfg->measuring = true;
+        DeviceConfig next = *gCfg;
+        if (!next.measuring) {
+            next.measureWas = next.length;
+            next.measureEnd = clampMeasure(next.length);
+            next.measuring = true;
         }
-        gMeasureSaveAt = 0;
-        if (!saveConfig(*gCfg)) {
+        if (!saveConfig(next)) {
             sendError(500, "storage failed", nullptr);
             return;
         }
+        *gCfg = next;
+        gMeasureSaveAt = 0;
         sendRestarting();
         return;
     }
@@ -415,8 +489,11 @@ static void handleMeasure() {
         return;
     }
     if (action == "move") {
-        gCfg->measureEnd = clampMeasure(gCfg->measureEnd + by);
-        gMeasureSaveAt = millis() + 400;
+        int64_t moved = (int64_t)gCfg->measureEnd + (int64_t)by;
+        if (moved < 4) moved = 4;
+        if (moved > kMaxLeds) moved = kMaxLeds;
+        gCfg->measureEnd = (int)moved;
+        gMeasureSaveAt = scheduleAfter(400);
         JsonDocument doc;
         doc["ok"] = true;
         doc["end"] = gCfg->measureEnd;
@@ -426,13 +503,15 @@ static void handleMeasure() {
         return;
     }
     if (action == "save") {
-        gCfg->length = gCfg->measureEnd;
-        gCfg->measuring = false;
-        gMeasureSaveAt = 0;
-        if (!saveConfig(*gCfg)) {
+        DeviceConfig next = *gCfg;
+        next.length = next.measureEnd;
+        next.measuring = false;
+        if (!saveConfig(next)) {
             sendError(500, "storage failed", nullptr);
             return;
         }
+        *gCfg = next;
+        gMeasureSaveAt = 0;
         JsonDocument doc;
         doc["ok"] = true;
         doc["restart"] = true;
@@ -444,12 +523,14 @@ static void handleMeasure() {
         return;
     }
     if (action == "cancel") {
-        gCfg->measuring = false;
-        gMeasureSaveAt = 0;
-        if (!saveConfig(*gCfg)) {
+        DeviceConfig next = *gCfg;
+        next.measuring = false;
+        if (!saveConfig(next)) {
             sendError(500, "storage failed", nullptr);
             return;
         }
+        *gCfg = next;
+        gMeasureSaveAt = 0;
         sendRestarting();
         return;
     }
@@ -481,21 +562,39 @@ static bool readLed(DeviceConfig& next, String& error, bool& hasBrightness) {
             error = "invalid json";
             return false;
         }
-        if (!doc["type"].isNull()) next.ledType = doc["type"].as<String>();
-        if (!doc["order"].isNull()) next.colorOrder = doc["order"].as<String>();
-        if (!doc["length"].isNull()) next.length = doc["length"].as<int>();
-        if (!doc["pin"].isNull()) next.pin = doc["pin"].as<int>();
+        if (!doc["type"].isNull()) next.ledType = doc["type"] | "";
+        if (!doc["order"].isNull()) next.colorOrder = doc["order"] | "";
+        if (!doc["length"].isNull() && !jsonStrictInt(doc["length"], next.length)) {
+            error = "invalid length";
+            return false;
+        }
+        if (!doc["pin"].isNull() && !jsonStrictInt(doc["pin"], next.pin)) {
+            error = "invalid pin";
+            return false;
+        }
         if (!doc["brightness"].isNull()) {
-            next.brightness = doc["brightness"].as<int>();
+            if (!jsonStrictInt(doc["brightness"], next.brightness)) {
+                error = "invalid brightness";
+                return false;
+            }
             hasBrightness = true;
         }
     } else {
         if (gServer.hasArg("type")) next.ledType = gServer.arg("type");
         if (gServer.hasArg("order")) next.colorOrder = gServer.arg("order");
-        if (gServer.hasArg("length")) next.length = gServer.arg("length").toInt();
-        if (gServer.hasArg("pin")) next.pin = gServer.arg("pin").toInt();
+        if (gServer.hasArg("length") && !parseStrictInt(gServer.arg("length"), next.length)) {
+            error = "invalid length";
+            return false;
+        }
+        if (gServer.hasArg("pin") && !parseStrictInt(gServer.arg("pin"), next.pin)) {
+            error = "invalid pin";
+            return false;
+        }
         if (gServer.hasArg("brightness")) {
-            next.brightness = gServer.arg("brightness").toInt();
+            if (!parseStrictInt(gServer.arg("brightness"), next.brightness)) {
+                error = "invalid brightness";
+                return false;
+            }
             hasBrightness = true;
         }
     }
@@ -526,7 +625,7 @@ static void rememberMaster(int value) {
     gCfg->master = value;
     gCfg->brightness = value;
     outputSetBrightness(value);
-    gMasterSaveAt = millis() + 400;
+    gMasterSaveAt = scheduleAfter(400);
 }
 
 static void handlePaletteGet() {
@@ -547,7 +646,7 @@ static void handlePalettePost() {
             sendError(400, "invalid json", nullptr);
             return;
         }
-        name = doc["palette"].as<String>();
+        name = doc["palette"] | "";
     } else if (gServer.hasArg("palette")) {
         name = gServer.arg("palette");
     }
@@ -555,12 +654,14 @@ static void handlePalettePost() {
         sendError(400, "invalid palette", nullptr);
         return;
     }
-    gCfg->palette = name;
-    outputSetPalette(name.c_str());
-    if (!saveConfig(*gCfg)) {
+    DeviceConfig next = *gCfg;
+    next.palette = name;
+    if (!saveConfig(next)) {
         sendError(500, "storage failed", nullptr);
         return;
     }
+    *gCfg = next;
+    outputSetPalette(name.c_str());
     sendOk();
 }
 
@@ -580,13 +681,13 @@ static void handleBrightnessPost() {
             sendError(400, "invalid json", nullptr);
             return;
         }
-        if (doc["brightness"].isNull()) {
+        if (!jsonStrictInt(doc["brightness"], value)) {
             sendError(400, "invalid brightness", nullptr);
             return;
         }
-        value = doc["brightness"].as<int>();
-    } else if (gServer.hasArg("brightness")) {
-        value = gServer.arg("brightness").toInt();
+    } else if (!gServer.hasArg("brightness") || !parseStrictInt(gServer.arg("brightness"), value)) {
+        sendError(400, "invalid brightness", nullptr);
+        return;
     }
     if (!validBrightness(value)) {
         sendError(400, "invalid brightness", nullptr);
@@ -611,15 +712,17 @@ static void handleLedPut() {
                     next.length != gCfg->length || next.pin != gCfg->pin;
     if (hasBrightness) {
         next.master = next.brightness;
-        outputSetBrightness(next.brightness);
     } else {
         next.master = gCfg->master;
     }
     next.measuring = false;
-    *gCfg = next;
-    if (!saveConfig(*gCfg)) {
+    if (!saveConfig(next)) {
         sendError(500, "storage failed", nullptr);
         return;
+    }
+    *gCfg = next;
+    if (hasBrightness) {
+        outputSetBrightness(gCfg->brightness);
     }
     gMasterSaveAt = 0;
     gMeasureSaveAt = 0;
@@ -665,9 +768,13 @@ static bool paramValueFromJson(Parameter* param, JsonVariant in, Value& out, Str
                     break;
                 }
             }
-            if (index < 0) index = text.toInt();
-        } else {
-            index = in.as<int>();
+            if (index < 0 && !parseStrictInt(text, index)) {
+                error = "invalid value";
+                return false;
+            }
+        } else if (!jsonStrictInt(in, index)) {
+            error = "invalid value";
+            return false;
         }
         if (index < 0 || index >= (int)param->enumValues.size()) {
             error = "invalid value";
@@ -676,7 +783,12 @@ static bool paramValueFromJson(Parameter* param, JsonVariant in, Value& out, Str
         out = Value((float)index);
         return true;
     }
-    out = Value(in.as<float>());
+    float num = 0.0f;
+    if (!jsonStrictFloat(in, num)) {
+        error = "invalid value";
+        return false;
+    }
+    out = Value(num);
     return true;
 }
 
@@ -740,10 +852,22 @@ static void handleParamsPost() {
             sendError(404, "parameter not found", nullptr);
             return;
         }
+        if (!gServer.hasArg("value")) {
+            sendError(400, "invalid value", nullptr);
+            return;
+        }
         JsonDocument box;
         String raw = gServer.arg("value");
-        if (param->type == PARAM_NUMBER) box.set(raw.toFloat());
-        else box.set(raw);
+        if (param->type == PARAM_NUMBER) {
+            float num = 0.0f;
+            if (!parseStrictFloat(raw, num)) {
+                sendError(400, "invalid value", nullptr);
+                return;
+            }
+            box.set(num);
+        } else {
+            box.set(raw);
+        }
         ok = paramValueFromJson(param, box.as<JsonVariant>(), value, error);
     }
     if (!ok) {
@@ -789,37 +913,36 @@ static bool wantsActivate() {
 }
 
 // Persists `source` under `name` and, if requested, activates it.
-// When activating, the program must parse *before* it is written to disk, so
-// an invalid replacement never overwrites the file backing the active
-// program (it would otherwise only surface as a boot failure after a later
-// restart). It is queued only after the write succeeds, so a failed write
-// never leaves the board running (and remembering) a program it didn't save.
+// The program must always parse *before* it is written to disk, so an invalid
+// replacement never overwrites a stored/active program (which would otherwise
+// only surface as a boot failure after a later restart). When activating, it is
+// queued only after the write succeeds, so a failed write never leaves the
+// board running (and remembering) a program it didn't save.
 static void saveAndRespond(const String& name, const String& source) {
     String error;
-    if (!wantsActivate()) {
-        if (!saveUserProgram(name, source, error)) {
-            sendError(400, error.c_str(), nullptr);
-            return;
-        }
-        sendOk();
-        return;
-    }
-
     if (!validateUserProgram(name, source, error)) {
-        sendError(400, error.c_str(), nullptr);
+        sendError(storageErrorCode(error), error.c_str(), nullptr);
         return;
     }
     ApplyResult result = checkProgram(source);
-    if (result.ok) {
-        if (writeUserProgramFile(name, source, error)) {
-            netEnqueue(name, source, true);
-        } else {
-            result.ok = false;
-            result.pending = false;
-            result.error = error;
-        }
+    if (!result.ok) {
+        sendApply(result);
+        return;
     }
-    sendApply(result);
+    if (!writeUserProgramFile(name, source, error)) {
+        result.ok = false;
+        result.pending = false;
+        result.error = error;
+        result.diagnostics.clear();
+        sendApply(result);
+        return;
+    }
+    if (wantsActivate()) {
+        netEnqueue(name, source, true);
+        sendApply(result);
+    } else {
+        sendOk();
+    }
 }
 
 static void handleProgramPut() {
@@ -834,17 +957,26 @@ static void handleUploadData() {
         gUpload = "";
         gUploadOverflow = false;
     } else if (upload.status == UPLOAD_FILE_WRITE) {
+        if (gUploadOverflow) return;
         if (gUpload.length() + upload.currentSize > kMaxProgramBytes) {
             gUploadOverflow = true;
+            gUpload = "";
             return;
         }
-        gUpload.concat((const char*)upload.buf, upload.currentSize);
+        if (!gUpload.concat((const char*)upload.buf, upload.currentSize)) {
+            gUploadOverflow = true;
+            gUpload = "";
+        }
+    } else if (upload.status == UPLOAD_FILE_ABORTED) {
+        gUpload = "";
+        gUploadOverflow = false;
     }
 }
 
 static void handleUpload() {
     if (gUploadOverflow) {
         gUpload = "";
+        gUploadOverflow = false;
         sendError(400, "program too large", nullptr);
         return;
     }
@@ -869,9 +1001,15 @@ static void handleDelete() {
     String name = gServer.arg("name");
     String error;
     if (!deleteUserProgram(name, error)) {
-        int code = error == "program not found" ? 404 : 400;
+        int code = error == "program not found" ? 404 : storageErrorCode(error);
         sendError(code, error.c_str(), nullptr);
         return;
+    }
+    if (gPending && gPendingRemember && gPendingName == name) {
+        gPending = false;
+        gPendingRemember = false;
+        gPendingName = "";
+        gPendingSource = "";
     }
     if (gCfg->activeProgram == name) {
         gCfg->activeProgram = kDefaultProgram;
@@ -915,14 +1053,24 @@ static void handleWifiGet() {
 }
 
 static bool gScanRunning = false;
+static uint32_t gScanStartedAt = 0;
 
 // Wi-Fi scans block for 1-3s. Run them asynchronously so the main loop (and
 // LED rendering) keeps running; the client polls this endpoint until "done".
 static void handleWifiScan() {
+    if (gScanRunning && millis() - gScanStartedAt > 15000) {
+        WiFi.scanDelete();
+        gScanRunning = false;
+    }
     if (!gScanRunning) {
         if (WiFi.getMode() == WIFI_AP) WiFi.mode(WIFI_AP_STA);
-        WiFi.scanNetworks(true);
+        int started = WiFi.scanNetworks(true);
+        if (started == WIFI_SCAN_FAILED) {
+            sendError(503, "wifi scan failed", nullptr);
+            return;
+        }
         gScanRunning = true;
+        gScanStartedAt = millis();
     }
     int count = WiFi.scanComplete();
     if (count == WIFI_SCAN_RUNNING) {
@@ -934,10 +1082,16 @@ static void handleWifiScan() {
         return;
     }
     gScanRunning = false;
+    if (count < 0) {
+        WiFi.scanDelete();
+        sendError(503, "wifi scan failed", nullptr);
+        return;
+    }
     JsonDocument doc;
     doc["done"] = true;
     JsonArray arr = doc["networks"].to<JsonArray>();
-    for (int i = 0; i < count; i++) {
+    int limit = count > 20 ? 20 : count;
+    for (int i = 0; i < limit; i++) {
         JsonObject item = arr.add<JsonObject>();
         item["ssid"] = WiFi.SSID(i);
         item["rssi"] = WiFi.RSSI(i);
@@ -983,22 +1137,26 @@ static void handleWifiPost() {
         sendError(400, error.c_str(), nullptr);
         return;
     }
-    gCfg->wifiSsid = ssid;
-    gCfg->wifiPassword = password;
-    if (!saveConfig(*gCfg)) {
+    DeviceConfig next = *gCfg;
+    next.wifiSsid = ssid;
+    next.wifiPassword = password;
+    if (!saveConfig(next)) {
         sendError(500, "storage failed", nullptr);
         return;
     }
+    *gCfg = next;
     Serial.printf("Saved network %s, restarting\n", ssid.c_str());
     sendRestarting();
 }
 
 static void handleWifiReset() {
-    clearWifi(*gCfg);
-    if (!saveConfig(*gCfg)) {
+    DeviceConfig next = *gCfg;
+    clearWifi(next);
+    if (!saveConfig(next)) {
         sendError(500, "storage failed", nullptr);
         return;
     }
+    *gCfg = next;
     Serial.println("Cleared Wi-Fi, restarting");
     sendRestarting();
 }
@@ -1147,6 +1305,12 @@ void netLoop() {
         gPhase = PhaseFallback;
     } else if (gPhase == PhaseFallback && WiFi.status() == WL_CONNECTED) {
         gPhase = PhaseSta;
+        if (gApOn) {
+            gDns.stop();
+            WiFi.softAPdisconnect(true);
+            WiFi.mode(WIFI_STA);
+            gApOn = false;
+        }
         Serial.printf("STA %s\n", WiFi.localIP().toString().c_str());
         startMdns();
     }

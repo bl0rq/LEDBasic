@@ -23,6 +23,8 @@ static String gGoodSource;
 static int gFps = 0;
 static uint32_t gFrames = 0;
 static uint32_t gFpsMark = 0;
+static int gLastMeasureLen = -1;
+static uint32_t gLastMeasureAt = 0;
 
 static EOrder orderFromName(const String& name) {
     if (name == "RGB") return RGB;
@@ -62,6 +64,8 @@ bool outputBegin(const String& ledType, const String& colorOrder, int length, in
     FastLED.clear(true);
     Serial.printf("Relay GPIO%d %s\n", kRelayPin, brightness > 0 ? "on" : "off");
     gFpsMark = millis();
+    gLastMeasureLen = -1;
+    gLastMeasureAt = 0;
     // The interpreter/controller still runs (web UI, params, preview API all
     // work) even without a physical channel, but report the channel failure
     // so callers can log that this device has no physical LED output.
@@ -101,9 +105,16 @@ const char* outputPaletteName() {
 
 void outputPaintMeasure(int length) {
     if (!gLeds || gLedCount <= 0) return;
-    fill_solid(gLeds, gLedCount, CRGB::Black);
     if (length < 1) length = 1;
     if (length > gLedCount) length = gLedCount;
+    uint32_t now = millis();
+    if (length == gLastMeasureLen && now - gLastMeasureAt < 200) {
+        delay(1);
+        return;
+    }
+    gLastMeasureLen = length;
+    gLastMeasureAt = now;
+    fill_solid(gLeds, gLedCount, CRGB::Black);
     int white = length - 1;
     auto paint = [&](int index, CRGB color) {
         if (index >= 0 && index < gLedCount) gLeds[index] = color;
@@ -127,10 +138,15 @@ int outputFps() {
 
 int outputPreview(uint8_t* rgb, int maxSamples) {
     if (!gLeds || gLedCount <= 0 || maxSamples <= 0) return 0;
-    int n = gLedCount < maxSamples ? gLedCount : maxSamples;
+    int visible = gLedCount;
+    if (netMeasuring()) {
+        int end = netMeasureEnd();
+        if (end >= 1 && end < visible) visible = end;
+    }
+    int n = visible < maxSamples ? visible : maxSamples;
     int bright = FastLED.getBrightness();
     for (int i = 0; i < n; i++) {
-        int src = n == 1 ? 0 : (i * (gLedCount - 1)) / (n - 1);
+        int src = n == 1 ? 0 : (i * (visible - 1)) / (n - 1);
         rgb[i * 3] = (uint8_t)((gLeds[src].r * bright) / 255);
         rgb[i * 3 + 1] = (uint8_t)((gLeds[src].g * bright) / 255);
         rgb[i * 3 + 2] = (uint8_t)((gLeds[src].b * bright) / 255);
@@ -186,6 +202,7 @@ bool outputLoad(const String& source, std::vector<OutputDiag>& diags) {
         return false;
     }
     gGoodSource = source;
+    if (gLeds && gLedCount > 0) fill_solid(gLeds, gLedCount, CRGB::Black);
     gController->runSetup();
     netSetBusy(false);
     return true;
