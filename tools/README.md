@@ -56,7 +56,7 @@ tools/build/tui/ledbasic-tui --device http://192.168.4.1
 
 Run from the repo root so example paths resolve. Windows Terminal (or any UTF-8 truecolor terminal) is recommended.
 
-F5 still runs the simulator on this PC. The Device menu talks to a board running `firmware/`. Shift+F5 sends the open editor buffer to the board without storing it. Connect saves the URL in `%APPDATA%\LEDBasic\device.url`. `--device` uses that URL for one launch.
+F5 still runs the simulator on this PC. The Device menu talks to a board running `firmware/` (Windows only; uses WinHTTP). Shift+F5 sends the open editor buffer to the board without storing it. Connect saves the URL in `%APPDATA%\LEDBasic\device.url`. `--device` uses that URL for one launch.
 
 ### Open / Save As
 
@@ -89,8 +89,9 @@ No terminal needed. `tui/app.h` builds the whole UI as one FTXUI component (`App
 - `tui/tests/test_app.cpp` — the manual checklist below, scripted, plus load errors, Ctrl+N/Ctrl+Q, speed and LED-count keys
 - `tui/tests/test_file_browser.cpp` — `FileBrowserModel` listing order, hidden files, filter, up/enter, errors, previews, drive roots
 - `tui/tests/test_file_menu.cpp` — File menu New/Open/Save/Save As/Exit and the file browser, driven by keys and by clicking labels on the rendered screen; file I/O goes to a temp folder
+- `tui/tests/test_device_client.cpp` — `DeviceClient` URL normalization, JSON parsing, error/diagnostic extraction, and restart detection
 
-The simulator runs on its own thread, so app tests poll with a timeout (`waitFor`) after F5/F8. The Device menu is not covered; tests run with no device URL.
+The simulator runs on its own thread, so app tests poll with a timeout (`waitFor`) after F5/F8. Live HTTP requests from the Device menu are not exercised; tests run with no device URL.
 
 ## Manual TUI checklist
 

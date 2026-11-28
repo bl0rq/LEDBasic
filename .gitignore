@@ -12,3 +12,4 @@ test/native/build.log
 tools/build/
 tools/tui/build/
 build/
+device.url

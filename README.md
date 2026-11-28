@@ -13,7 +13,7 @@ A **BASIC language interpreter** for programming LED animations with [FastLED](h
 
 ## Installation
 
-**Compiler requirement:** the `BasicExamples/*.h` headers load their `.bas` files with C23 `#embed`, which needs **GCC 15+ or Clang 19+**. The stock `espressif32` PlatformIO platform ships an older GCC; the firmware in `firmware/` uses the [Tasmota espressif32 platform](https://github.com/tasmota/platform-espressif32) (GCC 15.2). `LEDBasic.h` and the library sources include these headers, so every project using LEDBasic needs one of these compilers.
+**Compiler requirement:** the `BasicExamples/*.h` headers load their `.bas` files with C23 `#embed`, which needs **GCC 15+ or Clang 19+**. The stock `espressif32` PlatformIO platform ships an older GCC; the firmware in `firmware/` uses the [Tasmota espressif32 platform](https://github.com/tasmota/platform-espressif32) (GCC 15.2). The library sources (`VirtualStripDemos.cpp`) include these headers, so every project building the full LEDBasic library needs one of these compilers.
 
 ### PlatformIO (recommended)
 
