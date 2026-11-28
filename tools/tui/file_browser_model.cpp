@@ -106,6 +106,11 @@ bool FileBrowserModel::list(const std::string& dir, bool showHidden, std::vector
         }
         out.push_back(e);
     }
+    if (ec) {
+        if (error) *error = "cannot list " + dir + ": " + ec.message();
+        out.clear();
+        return false;
+    }
     std::sort(out.begin(), out.end(), [](const FileEntry& a, const FileEntry& b) {
         if (a.isDir != b.isDir) return a.isDir;
         std::string la = lower(a.name), lb = lower(b.name);
