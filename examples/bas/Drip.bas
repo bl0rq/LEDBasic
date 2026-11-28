@@ -12,7 +12,7 @@ loop(time)
   drop = floor(time / speed) % (n + 6)
   for i = 0 to n-1
     src = n - 1 - i
-    d = src - drop
+    d = drop - src
     if d < 0
       d = 99
     end

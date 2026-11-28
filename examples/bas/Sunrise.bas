@@ -9,7 +9,7 @@ end
 
 loop(time)
   n = numled()
-  edge = width + (time / speed) % (n + width)
+  edge = (time / speed) % (n + width)
   for i = 0 to n-1
     d = edge - i
     if d < 0

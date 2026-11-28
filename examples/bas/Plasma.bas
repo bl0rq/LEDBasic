@@ -11,7 +11,7 @@ loop(time)
   for i = 0 to numled()-1
     a = sin(i * scale + time / speed)
     b = sin(i * scale * 0.6 - time / speed * 0.7)
-    pos = (a + b + 2) * 64
+    pos = (a + b + 2) * 63.75
     v = 140 + a * 80
     setpal(i, pos, v)
   next

@@ -12,7 +12,9 @@ loop(time)
   n = numled()
   for i = 0 to n-1
     r = get_led_r(i) * 0.75
-    setled(i, r, r * 0.4, 0)
+    g = get_led_g(i) * 0.75
+    b = get_led_b(i) * 0.75
+    setled(i, r, g, b)
   next
   k = floor(time / speed)
   sethsv((k * 17) % n, hue, 255, 255)

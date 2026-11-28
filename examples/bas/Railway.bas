@@ -18,8 +18,8 @@ loop(time)
     sethsv(shift - 1, 40, 200, 120)
   end
   sethsv(b, 200, 255, 255)
-  if b > 0
-    sethsv(b - 1, 200, 180, 80)
+  if b + 1 < n
+    sethsv(b + 1, 200, 180, 80)
   end
   show()
 end

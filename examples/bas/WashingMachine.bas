@@ -11,7 +11,7 @@ loop(time)
   span = n * 2
   p = floor(time / speed) % span
   if p >= n
-    p = span - p
+    p = span - 1 - p
   end
   h = (time / 20) % 360
   door = n / 5

@@ -13,7 +13,7 @@ loop(time)
   span = n * 2
   p = floor(time / speed) % span
   if p >= n
-    p = span - p
+    p = span - 1 - p
   end
   q = n - 1 - p
   clear()

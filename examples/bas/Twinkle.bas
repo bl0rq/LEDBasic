@@ -7,7 +7,7 @@ setup
   brightness(128)
   for i = 0 to numled()-1
     if i % 7 == 0
-      sethsv(i, 45, 80, 160)
+      sethsv(i, hue, 80, 160)
     else
       setled(i, 0, 0, 0)
     end
@@ -17,10 +17,13 @@ end
 loop(time)
   n = numled()
   for i = 0 to n-1
-    v = get_led_r(i) * 0.92
-    setled(i, v, v * 0.8, v * 0.4)
+    r = get_led_r(i) * 0.92
+    g = get_led_g(i) * 0.92
+    b = get_led_b(i) * 0.92
+    setled(i, r, g, b)
   next
-  pick = floor(time / rate) % n
+  k = floor(time / rate)
+  pick = (k * 37 + (k % 17) * 13) % n
   sethsv(pick, hue, 60, 255)
   show()
 end
