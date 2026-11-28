@@ -67,6 +67,7 @@ label { display: block; margin: .5rem 0; }
 .hidden { display: none; }
 table { width: 100%; border-collapse: collapse; }
 td, th { text-align: left; padding: .4rem .15rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tr.running td:first-child { color: var(--accent); font-weight: 600; }
 .row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .35rem 0; }
 canvas { width: 100%; height: 28px; background: var(--chip); display: block; }
 .param { margin: .8rem 0; }
@@ -84,7 +85,7 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); }
 <p id=error class="error hidden"></p>
 <p id=restart class=hidden>Restarting. Reconnect, then open this page again.</p>
 <canvas id=strip width=640 height=28 aria-label="LED preview"></canvas>
-<label class=spread>Brightness <span id=bright-read class=muted>255</span></label>
+<label class=spread for=bright>Brightness <span id=bright-read class=muted>255</span></label>
 <input id=bright type=range min=0 max=255 step=1 value=255>
 <label class=spread>Palette <select id=palette></select></label>
 <h2>Status</h2>
@@ -96,11 +97,11 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); }
 <p><button type=button id=scan>Scan networks</button></p>
 <div id=networks></div>
 <form id=join>
-  <label>SSID <input name=ssid required></label>
-  <label>Password <input name=password type=password></label>
+  <label>SSID <input name=ssid maxlength=32 required></label>
+  <label>Password <input name=password type=password maxlength=63></label>
   <button type=submit class=primary>Join</button>
 </form>
-<form method=post action=/api/wifi/reset>
+<form id=wifi-reset method=post action=/api/wifi/reset>
   <button type=submit>Forget network</button>
 </form>
 <h2>LEDs</h2>
@@ -145,7 +146,7 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); }
 <div id=params></div>
 <h2>Upload</h2>
 <form id=upload method=post action=/api/program/upload enctype=multipart/form-data>
-  <label>Name <input name=name required></label>
+  <label>Name <input name=name maxlength=23 pattern="[A-Za-z][A-Za-z0-9_]*" required></label>
   <label>File <input name=file type=file accept=.bas,.txt required></label>
   <label><input name=activate type=checkbox value=1> Run after upload</label>
   <button type=submit class=primary>Upload</button>
@@ -543,10 +544,6 @@ function measure(action, by) {
       var lengthField = document.getElementById("leds").elements.namedItem("length");
       if (lengthField) lengthField.value = String(data.end);
     }
-    if (data.length != null) {
-      var savedLength = document.getElementById("leds").elements.namedItem("length");
-      if (savedLength) savedLength.value = String(data.length);
-    }
   }).catch(function () { showError("could not measure"); });
 }
 document.getElementById("find").addEventListener("click", function () { measure("start"); });
@@ -571,6 +568,12 @@ document.getElementById("join").addEventListener("submit", function (event) {
   joinNetwork(form.ssid.value, form.password.value).catch(function () {
     showError("could not join network");
   });
+});
+
+document.getElementById("wifi-reset").addEventListener("submit", function (event) {
+  if (!window.confirm("Forget saved Wi-Fi network and restart?")) {
+    event.preventDefault();
+  }
 });
 
 function pollScan(button, box, tries) {
@@ -607,20 +610,24 @@ function pollScan(button, box, tries) {
       var signal = document.createElement("span");
       signal.className = "muted";
       signal.textContent = item.rssi + " dBm";
-      var password = document.createElement("input");
-      password.type = "password";
-      password.placeholder = "password";
-      password.autocomplete = "off";
+      var password = null;
+      if (item.secure) {
+        password = document.createElement("input");
+        password.type = "password";
+        password.placeholder = "password";
+        password.maxLength = 63;
+        password.autocomplete = "off";
+      }
       var submit = document.createElement("button");
       submit.type = "submit";
       submit.textContent = "Join";
       form.appendChild(name);
       form.appendChild(signal);
-      form.appendChild(password);
+      if (password) form.appendChild(password);
       form.appendChild(submit);
       form.addEventListener("submit", function (event) {
         event.preventDefault();
-        joinNetwork(item.ssid, password.value).catch(function () {
+        joinNetwork(item.ssid, password ? password.value : "").catch(function () {
           showError("could not join network");
         });
       });

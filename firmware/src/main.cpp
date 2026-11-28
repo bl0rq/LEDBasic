@@ -74,7 +74,6 @@ void loop() {
         netApply(name, source, remember);
     }
 
-    netSetBusy(true);
     if (netMeasuring()) {
         outputPaintMeasure(netMeasureEnd());
     } else if (outputController() && !outputController()->hasRuntimeError()) {
@@ -83,5 +82,4 @@ void loop() {
         delay(1);
     }
     outputNoteFrame();
-    netSetBusy(false);
 }

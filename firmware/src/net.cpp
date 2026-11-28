@@ -20,7 +20,6 @@ static DeviceConfig* gCfg = nullptr;
 
 static bool gApOn = false;
 static bool gMdns = false;
-static bool gBusy = false;
 static String gApSsid;
 static uint32_t gStaStarted = 0;
 static uint32_t gRestartAt = 0;
@@ -48,8 +47,6 @@ static bool gButtonDown = false;
 static bool gButtonFired = false;
 static uint32_t gButtonDownAt = 0;
 
-void netSetBusy(bool busy) { gBusy = busy; }
-bool netBusy() { return gBusy; }
 unsigned long netMillis(void*) { return millis(); }
 
 const String& netRunningName() { return gRunningName; }
@@ -471,7 +468,6 @@ static void handleMeasure() {
     if (action == "start") {
         DeviceConfig next = *gCfg;
         if (!next.measuring) {
-            next.measureWas = next.length;
             next.measureEnd = clampMeasure(next.length);
             next.measuring = true;
         }
@@ -1167,7 +1163,7 @@ static void handleRestart() {
 }
 
 static void redirectHome() {
-    gServer.sendHeader("Location", "/", true);
+    gServer.sendHeader("Location", gApOn ? "http://192.168.4.1/" : "/", true);
     gServer.send(302, "text/plain", "");
 }
 

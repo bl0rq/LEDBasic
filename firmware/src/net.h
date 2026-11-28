@@ -16,8 +16,6 @@ struct ApplyResult {
 
 void netBegin(DeviceConfig& cfg);
 void netLoop();
-void netSetBusy(bool busy);
-bool netBusy();
 unsigned long netMillis(void* user);
 void netDelay(int ms, void* user);
 

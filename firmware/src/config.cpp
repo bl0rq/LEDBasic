@@ -42,7 +42,6 @@ void sanitizeConfig(DeviceConfig& cfg) {
     if (!validBrightness(cfg.master)) cfg.master = kDefaultMaster;
     if (findPalette(cfg.palette.c_str()) < 0) cfg.palette = kDefaultPalette;
     if (cfg.activeProgram.length() == 0) cfg.activeProgram = kDefaultProgram;
-    if (!validLength(cfg.measureWas)) cfg.measureWas = cfg.length;
     if (cfg.measureEnd < 4) cfg.measureEnd = 4;
     if (cfg.measureEnd > kMaxLeds) cfg.measureEnd = kMaxLeds;
 }
@@ -59,7 +58,6 @@ bool loadConfig(DeviceConfig& cfg) {
         cfg.palette = kDefaultPalette;
         cfg.activeProgram = kDefaultProgram;
         cfg.measuring = false;
-        cfg.measureWas = cfg.length;
         cfg.measureEnd = cfg.length;
         return false;
     }
@@ -74,7 +72,6 @@ bool loadConfig(DeviceConfig& cfg) {
     cfg.palette = prefs.getString("pal", kDefaultPalette);
     cfg.activeProgram = prefs.getString("prog", kDefaultProgram);
     cfg.measuring = prefs.getInt("meas", 0) != 0;
-    cfg.measureWas = prefs.getInt("mwas", cfg.length);
     cfg.measureEnd = prefs.getInt("mend", cfg.length);
     prefs.end();
     sanitizeConfig(cfg);
@@ -99,7 +96,6 @@ bool saveConfig(const DeviceConfig& cfg) {
     ok &= prefs.putString("pal", cfg.palette) == cfg.palette.length();
     ok &= prefs.putString("prog", cfg.activeProgram) == cfg.activeProgram.length();
     ok &= prefs.putInt("meas", cfg.measuring ? 1 : 0) != 0;
-    ok &= prefs.putInt("mwas", cfg.measureWas) != 0;
     ok &= prefs.putInt("mend", cfg.measureEnd) != 0;
     prefs.end();
     if (!ok) {

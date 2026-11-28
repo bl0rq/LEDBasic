@@ -41,7 +41,6 @@ struct DeviceConfig {
     String palette;
     String activeProgram;
     bool measuring;
-    int measureWas;
     int measureEnd;
 };
 

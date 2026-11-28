@@ -82,6 +82,7 @@ void outputSetBrightness(int brightness) {
     gMaster = brightness;
     setRelay(gMaster);
     if (gController) gController->setMasterBrightness((uint8_t)gMaster);
+    if (gLeds && gLedCount > 0) FastLED.show();
 }
 
 int outputBrightness() {
@@ -191,19 +192,16 @@ bool outputCheck(const String& source, std::vector<OutputDiag>& diags) {
 bool outputLoad(const String& source, std::vector<OutputDiag>& diags) {
     diags.clear();
     if (!gController) return false;
-    netSetBusy(true);
     gController->interrupt();
     if (!gController->loadProgram(source)) {
         appendDiags(gController->getDiagnostics(), diags);
         if (gGoodSource.length() > 0 && gController->loadProgram(gGoodSource)) {
             gController->runSetup();
         }
-        netSetBusy(false);
         return false;
     }
     gGoodSource = source;
     if (gLeds && gLedCount > 0) fill_solid(gLeds, gLedCount, CRGB::Black);
     gController->runSetup();
-    netSetBusy(false);
     return true;
 }
