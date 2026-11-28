@@ -94,7 +94,7 @@ void clearName(App& app) {
 }
 
 std::string norm(const fs::path& p) {
-    return FileBrowserModel::normalize(p.string());
+    return FileBrowserModel::normalize(ledbasic::genericUtf8FromPath(p));
 }
 
 void testMenuOpensAndCloses() {
@@ -131,7 +131,7 @@ void testNew() {
 // Mouse: first click selects and previews, a second click opens.
 void testOpenExampleWithMouse() {
     auto app = makeApp();
-    fs::path breathing = fs::path(examplesDir()) / "Breathing.bas";
+    fs::path breathing = ledbasic::pathFromUtf8(examplesDir()) / "Breathing.bas";
     app->editor().goToLine(3);
     press(*app, Event::F9);
 
@@ -150,7 +150,7 @@ void testOpenExampleWithMouse() {
     CHECK(contains(frame(*app), "param intensity"), "open: preview shows the selected file");
     CHECK(clickText(*app, "Breathing.bas"), "open: example clicked again");
     CHECK(!app->openVisible(), "open: second click opens and closes the browser");
-    CHECK(fs::equivalent(app->filePath(), breathing), "open: file path is the example");
+    CHECK(fs::equivalent(ledbasic::pathFromUtf8(app->filePath()), breathing), "open: file path is the example");
     CHECK(app->editor().getText() == readFile(breathing), "open: editor shows the file");
     CHECK(app->session().source() == readFile(breathing), "open: session loaded the file");
     CHECK(app->editor().breakpoints().empty(), "open: old breakpoints are cleared");
@@ -372,7 +372,7 @@ void testSaveAsOverwrite() {
 void testSaveAsSameFileNoPrompt() {
     fs::path file = tempDir() / "mine.bas";
     writeFile(file, "setup\nend\n");
-    auto app = makeApp(file.string());
+    auto app = makeApp(ledbasic::genericUtf8FromPath(file));
     app->editor().TakeFocus();
     press(*app, Event::Character('#'));
     CHECK(menuCommand(*app, "Save As"), "same file: Save As clicked");
@@ -385,7 +385,7 @@ void testSaveAsSameFileNoPrompt() {
 void testSaveExisting() {
     fs::path file = tempDir() / "existing.bas";
     writeFile(file, "setup\nend\n\nloop(time)\n  show()\nend\n");
-    auto app = makeApp(file.string());
+    auto app = makeApp(ledbasic::genericUtf8FromPath(file));
     app->editor().TakeFocus();
     press(*app, Event::Character('#'));
     CHECK(menuCommand(*app, "Save   "), "save: menu item clicked");

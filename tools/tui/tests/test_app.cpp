@@ -1,5 +1,6 @@
 #include "app.h"
 #include "tui_test.h"
+#include "Utf8Path.h"
 
 #include <fstream>
 #include <iterator>
@@ -220,7 +221,7 @@ void testSpeedAndLedKeys() {
 // Starting from Stopped reloads from the editor (which drops CRs), so F5 at
 // the breakpoint must still continue rather than restart.
 void testF5ContinuesWithCrlfSource() {
-    std::ifstream in(defaultProgramPath(), std::ios::binary);
+    std::ifstream in(ledbasic::pathFromUtf8(defaultProgramPath()), std::ios::binary);
     std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     std::string crlf;
     for (char c : body) {

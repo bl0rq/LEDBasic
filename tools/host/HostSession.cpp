@@ -137,6 +137,7 @@ void HostSession::startWorker() {
 void HostSession::captureController(Snapshot& s, std::vector<Diagnostic>& diags) const {
     s.programLoaded = false;
     s.brightness = 255;
+    s.master = 255;
     s.currentLine = 0;
     s.currentColumn = 0;
     s.statementDepth = 0;

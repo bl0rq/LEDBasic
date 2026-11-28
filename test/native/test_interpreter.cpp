@@ -3,7 +3,6 @@
 #include "BasicExamples/Rainbow.h"
 #include "BasicExamples/PulsingCenter.h"
 #include "BasicExamples/BikeRolling.h"
-#include "BasicExamples/BackgroundStars.h"
 #include <cstdio>
 #include <cstdlib>
 

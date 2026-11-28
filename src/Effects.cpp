@@ -104,6 +104,7 @@ void ColorOrderTest(int num_leds, CRGB* leds)
 
 void FastLEDDemoLoop(fl::DemoReel100Ptr demoReel, int num_leds, CRGB* leds)
 {
+  if (!demoReel || !leds || num_leds <= 0) return;
   //Run the DemoReel100 draw function
   demoReel->draw(fl::Fx::DrawContext(millis(), fl::span<CRGB>(leds, num_leds)));
 

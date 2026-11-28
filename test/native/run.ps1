@@ -20,10 +20,12 @@ if (-not $cxx) {
 }
 
 Write-Host "Compiling with $cxx"
+$linkFlags = if ($cxx -eq "g++") { @("-static-libgcc", "-static-libstdc++") } else { @() }
 & $cxx -std=c++17 -O0 -g `
     "-I$native" `
     "-I$(Join-Path $root 'include')" `
     $src $test `
+    $linkFlags `
     -o $out
 
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

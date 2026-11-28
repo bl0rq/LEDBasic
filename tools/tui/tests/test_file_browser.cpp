@@ -87,7 +87,7 @@ std::string names(const FileBrowserModel& m) {
 }
 
 std::string root() {
-    return FileBrowserModel::normalize(treeRoot().string());
+    return FileBrowserModel::normalize(ledbasic::genericUtf8FromPath(treeRoot()));
 }
 
 void testListing() {
@@ -220,7 +220,7 @@ void testUnicodeNames() {
 
 void testRoot() {
     FileBrowserModel m;
-    std::string driveRoot = FileBrowserModel::normalize(treeRoot().root_path().string());
+    std::string driveRoot = FileBrowserModel::normalize(ledbasic::genericUtf8FromPath(treeRoot().root_path()));
     m.chdir(driveRoot);
     CHECK(m.cwd() == driveRoot, "browser: can list the filesystem root");
 #ifdef _WIN32
