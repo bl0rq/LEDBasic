@@ -69,4 +69,8 @@ std::string programNameFromPath(const std::string& path);
 std::string deviceResultMessage(const HttpResult& result);
 bool deviceWillRestart(const HttpResult& result);
 
+DeviceStatus parseDeviceStatus(const HttpResult& http);
+bool parseDevicePrograms(const HttpResult& http, std::vector<DeviceProgram>& out, std::string& error);
+bool parseDeviceLed(const HttpResult& http, DeviceLed& out, std::string& error);
+
 }  // namespace ledbasic

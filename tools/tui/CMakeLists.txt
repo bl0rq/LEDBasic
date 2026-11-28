@@ -45,6 +45,7 @@ add_executable(ledbasic_tui_tests
     tests/test_app.cpp
     tests/test_file_menu.cpp
     tests/test_file_browser.cpp
+    tests/test_device_client.cpp
 )
 target_link_libraries(ledbasic_tui_tests PRIVATE ledbasic_tui_core)
 if(WIN32)

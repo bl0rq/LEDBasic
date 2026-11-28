@@ -1,10 +1,14 @@
 #include "DeviceClient.h"
 #include "Utf8Path.h"
 
+#include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -25,73 +29,318 @@ std::string trim(std::string text) {
     return text.substr(begin, end - begin);
 }
 
-size_t findKey(const std::string& json, const std::string& key, size_t from = 0) {
-    const std::string pat = "\"" + key + "\"";
-    size_t at = json.find(pat, from);
-    if (at == std::string::npos) return std::string::npos;
-    at = json.find(':', at + pat.size());
-    if (at == std::string::npos) return std::string::npos;
-    return at + 1;
+bool startsWithNoCase(const std::string& text, const char* prefix) {
+    size_t i = 0;
+    while (prefix[i] != '\0') {
+        if (i >= text.size()) return false;
+        if (std::tolower((unsigned char)text[i]) != std::tolower((unsigned char)prefix[i])) return false;
+        i++;
+    }
+    return true;
 }
 
-void skipWs(const std::string& json, size_t& i) {
-    while (i < json.size() && std::isspace((unsigned char)json[i])) i++;
-}
-
-std::string parseJsonString(const std::string& json, size_t& i) {
-    skipWs(json, i);
-    if (i >= json.size() || json[i] != '"') return "";
-    i++;
+std::string urlEncode(const std::string& text) {
+    static const char kHex[] = "0123456789ABCDEF";
     std::string out;
-    while (i < json.size()) {
-        char c = json[i++];
-        if (c == '"') break;
-        if (c == '\\' && i < json.size()) {
-            char e = json[i++];
-            if (e == 'n') out.push_back('\n');
-            else if (e == 't') out.push_back('\t');
-            else out.push_back(e);
+    out.reserve(text.size());
+    for (unsigned char c : text) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back((char)c);
         } else {
-            out.push_back(c);
+            out.push_back('%');
+            out.push_back(kHex[(c >> 4) & 0x0F]);
+            out.push_back(kHex[c & 0x0F]);
         }
     }
     return out;
 }
 
-std::string jsonString(const std::string& json, const std::string& key) {
-    size_t at = findKey(json, key);
-    if (at == std::string::npos) return "";
-    return parseJsonString(json, at);
+std::string jsonEscape(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    for (unsigned char c : text) {
+        if (c == '"') out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\b') out += "\\b";
+        else if (c == '\f') out += "\\f";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else if (c == '\t') out += "\\t";
+        else if (c < 0x20) {
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "\\u%04x", (unsigned)c);
+            out += buf;
+        } else {
+            out.push_back((char)c);
+        }
+    }
+    return out;
 }
 
-int jsonInt(const std::string& json, const std::string& key, int fallback) {
-    size_t at = findKey(json, key);
-    if (at == std::string::npos) return fallback;
-    skipWs(json, at);
-    if (at >= json.size()) return fallback;
-    return std::atoi(json.c_str() + at);
+struct JsonValue {
+    enum Type { Null, Bool, Number, String, Array, Object };
+    Type type = Null;
+    bool boolVal = false;
+    double numVal = 0.0;
+    std::string strVal;
+    std::vector<JsonValue> arrVal;
+    std::vector<std::pair<std::string, JsonValue>> objVal;
+
+    const JsonValue* field(const char* key) const {
+        if (type != Object) return nullptr;
+        for (const auto& kv : objVal) {
+            if (kv.first == key) return &kv.second;
+        }
+        return nullptr;
+    }
+
+    std::string asString(const std::string& fallback = "") const {
+        return type == String ? strVal : fallback;
+    }
+
+    int asInt(int fallback) const {
+        if (type != Number || !std::isfinite(numVal)) return fallback;
+        return (int)numVal;
+    }
+
+    bool asBool(bool fallback = false) const {
+        return type == Bool ? boolVal : fallback;
+    }
+};
+
+class JsonParser {
+public:
+    explicit JsonParser(const std::string& src) : s_(src) {}
+
+    bool parse(JsonValue& out) {
+        skipWs();
+        if (!parseValue(out, 0)) return false;
+        skipWs();
+        return i_ == s_.size();
+    }
+
+private:
+    const std::string& s_;
+    size_t i_ = 0;
+
+    void skipWs() {
+        while (i_ < s_.size() && (s_[i_] == ' ' || s_[i_] == '\t' || s_[i_] == '\r' || s_[i_] == '\n')) {
+            i_++;
+        }
+    }
+
+    static void appendUtf8(std::string& out, unsigned cp) {
+        if (cp <= 0x7F) {
+            out.push_back((char)cp);
+        } else if (cp <= 0x7FF) {
+            out.push_back((char)(0xC0 | ((cp >> 6) & 0x1F)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        } else if (cp <= 0xFFFF) {
+            out.push_back((char)(0xE0 | ((cp >> 12) & 0x0F)));
+            out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        } else {
+            out.push_back((char)(0xF0 | ((cp >> 18) & 0x07)));
+            out.push_back((char)(0x80 | ((cp >> 12) & 0x3F)));
+            out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        }
+    }
+
+    bool parseHex4(unsigned& out) {
+        if (i_ + 4 > s_.size()) return false;
+        unsigned v = 0;
+        for (int k = 0; k < 4; k++) {
+            char c = s_[i_++];
+            v <<= 4;
+            if (c >= '0' && c <= '9') v |= (unsigned)(c - '0');
+            else if (c >= 'a' && c <= 'f') v |= (unsigned)(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') v |= (unsigned)(c - 'A' + 10);
+            else return false;
+        }
+        out = v;
+        return true;
+    }
+
+    bool parseString(std::string& out) {
+        if (i_ >= s_.size() || s_[i_] != '"') return false;
+        i_++;
+        out.clear();
+        while (i_ < s_.size()) {
+            unsigned char c = (unsigned char)s_[i_++];
+            if (c == '"') return true;
+            if (c < 0x20) return false;
+            if (c == '\\') {
+                if (i_ >= s_.size()) return false;
+                char e = s_[i_++];
+                switch (e) {
+                    case '"': out.push_back('"'); break;
+                    case '\\': out.push_back('\\'); break;
+                    case '/': out.push_back('/'); break;
+                    case 'b': out.push_back('\b'); break;
+                    case 'f': out.push_back('\f'); break;
+                    case 'n': out.push_back('\n'); break;
+                    case 'r': out.push_back('\r'); break;
+                    case 't': out.push_back('\t'); break;
+                    case 'u': {
+                        unsigned cp = 0;
+                        if (!parseHex4(cp)) return false;
+                        if (cp >= 0xD800 && cp <= 0xDBFF && i_ + 2 <= s_.size() &&
+                            s_[i_] == '\\' && s_[i_ + 1] == 'u') {
+                            size_t saved = i_;
+                            i_ += 2;
+                            unsigned low = 0;
+                            if (parseHex4(low) && low >= 0xDC00 && low <= 0xDFFF) {
+                                cp = 0x10000 + (((cp - 0xD800) << 10) | (low - 0xDC00));
+                            } else {
+                                i_ = saved;
+                            }
+                        }
+                        appendUtf8(out, cp);
+                        break;
+                    }
+                    default: return false;
+                }
+            } else {
+                out.push_back((char)c);
+            }
+        }
+        return false;
+    }
+
+    bool parseNumber(double& out) {
+        size_t start = i_;
+        if (i_ < s_.size() && s_[i_] == '-') i_++;
+        if (i_ >= s_.size() || !std::isdigit((unsigned char)s_[i_])) return false;
+        if (s_[i_] == '0') {
+            i_++;
+        } else {
+            while (i_ < s_.size() && std::isdigit((unsigned char)s_[i_])) i_++;
+        }
+        if (i_ < s_.size() && s_[i_] == '.') {
+            i_++;
+            if (i_ >= s_.size() || !std::isdigit((unsigned char)s_[i_])) return false;
+            while (i_ < s_.size() && std::isdigit((unsigned char)s_[i_])) i_++;
+        }
+        if (i_ < s_.size() && (s_[i_] == 'e' || s_[i_] == 'E')) {
+            i_++;
+            if (i_ < s_.size() && (s_[i_] == '+' || s_[i_] == '-')) i_++;
+            if (i_ >= s_.size() || !std::isdigit((unsigned char)s_[i_])) return false;
+            while (i_ < s_.size() && std::isdigit((unsigned char)s_[i_])) i_++;
+        }
+        std::string token = s_.substr(start, i_ - start);
+        char* end = nullptr;
+        out = std::strtod(token.c_str(), &end);
+        return end != token.c_str() && std::isfinite(out);
+    }
+
+    bool parseValue(JsonValue& out, int depth) {
+        if (depth > 32) return false;
+        skipWs();
+        if (i_ >= s_.size()) return false;
+        char c = s_[i_];
+        if (c == '"') {
+            out = JsonValue{};
+            out.type = JsonValue::String;
+            return parseString(out.strVal);
+        }
+        if (c == '{') {
+            i_++;
+            out = JsonValue{};
+            out.type = JsonValue::Object;
+            skipWs();
+            if (i_ < s_.size() && s_[i_] == '}') {
+                i_++;
+                return true;
+            }
+            for (;;) {
+                skipWs();
+                std::string key;
+                if (!parseString(key)) return false;
+                skipWs();
+                if (i_ >= s_.size() || s_[i_] != ':') return false;
+                i_++;
+                JsonValue val;
+                if (!parseValue(val, depth + 1)) return false;
+                out.objVal.emplace_back(std::move(key), std::move(val));
+                skipWs();
+                if (i_ >= s_.size()) return false;
+                if (s_[i_] == '}') {
+                    i_++;
+                    return true;
+                }
+                if (s_[i_] != ',') return false;
+                i_++;
+            }
+        }
+        if (c == '[') {
+            i_++;
+            out = JsonValue{};
+            out.type = JsonValue::Array;
+            skipWs();
+            if (i_ < s_.size() && s_[i_] == ']') {
+                i_++;
+                return true;
+            }
+            for (;;) {
+                JsonValue elem;
+                if (!parseValue(elem, depth + 1)) return false;
+                out.arrVal.push_back(std::move(elem));
+                skipWs();
+                if (i_ >= s_.size()) return false;
+                if (s_[i_] == ']') {
+                    i_++;
+                    return true;
+                }
+                if (s_[i_] != ',') return false;
+                i_++;
+            }
+        }
+        if (s_.compare(i_, 4, "true") == 0) {
+            i_ += 4;
+            out = JsonValue{};
+            out.type = JsonValue::Bool;
+            out.boolVal = true;
+            return true;
+        }
+        if (s_.compare(i_, 5, "false") == 0) {
+            i_ += 5;
+            out = JsonValue{};
+            out.type = JsonValue::Bool;
+            out.boolVal = false;
+            return true;
+        }
+        if (s_.compare(i_, 4, "null") == 0) {
+            i_ += 4;
+            out = JsonValue{};
+            out.type = JsonValue::Null;
+            return true;
+        }
+        if (c == '-' || std::isdigit((unsigned char)c)) {
+            out = JsonValue{};
+            out.type = JsonValue::Number;
+            return parseNumber(out.numVal);
+        }
+        return false;
+    }
+};
+
+bool parseJson(const std::string& text, JsonValue& out) {
+    JsonParser parser(text);
+    return parser.parse(out);
 }
 
-bool jsonBool(const std::string& json, const std::string& key) {
-    size_t at = findKey(json, key);
-    if (at == std::string::npos) return false;
-    skipWs(json, at);
-    return json.compare(at, 4, "true") == 0;
-}
-
-std::string firstDiagnostic(const std::string& json) {
-    size_t diag = json.find("\"diagnostics\"");
-    if (diag == std::string::npos) return "";
-    size_t obj = json.find('{', diag);
-    if (obj == std::string::npos) return "";
-    size_t end = json.find('}', obj);
-    if (end == std::string::npos) return "";
-    std::string one = json.substr(obj, end - obj + 1);
-    int line = jsonInt(one, "line", 0);
-    int column = jsonInt(one, "column", 0);
-    std::string message = jsonString(one, "message");
-    if (message.empty()) return "";
-    return std::to_string(line) + ":" + std::to_string(column) + " " + message;
+std::string formatDiagObject(const JsonValue& diag) {
+    if (diag.type != JsonValue::Object) return "";
+    const JsonValue* msg = diag.field("message");
+    if (!msg || msg->type != JsonValue::String || msg->strVal.empty()) return "";
+    const JsonValue* line = diag.field("line");
+    const JsonValue* col = diag.field("column");
+    int l = line ? line->asInt(0) : 0;
+    int c = col ? col->asInt(0) : 0;
+    if (l > 0) return std::to_string(l) + ":" + std::to_string(c) + " " + msg->strVal;
+    return msg->strVal;
 }
 
 // Keep this list in sync with the firmware's builtin catalog
@@ -133,11 +382,25 @@ struct HttpHandle {
 }  // namespace
 
 void DeviceClient::setBaseUrl(std::string url) {
-    url = trim(url);
-    if (!url.empty() && url.rfind("http://", 0) != 0 && url.rfind("https://", 0) != 0) {
+    url = trim(std::move(url));
+    if (url.empty()) {
+        baseUrl.clear();
+        return;
+    }
+    if (startsWithNoCase(url, "http://")) {
+        url.replace(0, 7, "http://");
+    } else if (startsWithNoCase(url, "https://")) {
+        url.replace(0, 8, "https://");
+    } else {
         url = "http://" + url;
     }
+    size_t cut = url.find_first_of("?#");
+    if (cut != std::string::npos) url.erase(cut);
     while (!url.empty() && url.back() == '/') url.pop_back();
+    if (url == "http:" || url == "https:") {
+        baseUrl.clear();
+        return;
+    }
     baseUrl = std::move(url);
 }
 
@@ -168,7 +431,7 @@ HttpResult DeviceClient::request(const std::string& method, const std::string& p
     parts.dwUrlPathLength = 2048;
     parts.lpszExtraInfo = extra;
     parts.dwExtraInfoLength = 1024;
-    if (!WinHttpCrackUrl(wideUrl.c_str(), 0, 0, &parts)) {
+    if (!WinHttpCrackUrl(wideUrl.c_str(), 0, 0, &parts) || parts.dwHostNameLength == 0) {
         result.error = "bad device url";
         return result;
     }
@@ -202,12 +465,16 @@ HttpResult DeviceClient::request(const std::string& method, const std::string& p
         return result;
     }
 
-    std::wstring headers;
-    if (!contentType.empty()) headers = L"Content-Type: " + widen(contentType);
+    DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    WinHttpSetOption(request.handle, WINHTTP_OPTION_REDIRECT_POLICY,
+                     &redirectPolicy, sizeof(redirectPolicy));
+
+    std::wstring headers = L"Accept: application/json\r\n";
+    if (!contentType.empty()) headers += L"Content-Type: " + widen(contentType) + L"\r\n";
     BOOL sent = WinHttpSendRequest(
         request.handle,
-        headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
-        headers.empty() ? 0 : (DWORD)-1,
+        headers.c_str(),
+        (DWORD)-1,
         body.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)body.data(),
         (DWORD)body.size(), (DWORD)body.size(), 0);
     if (!sent || !WinHttpReceiveResponse(request.handle, nullptr)) {
@@ -217,28 +484,47 @@ HttpResult DeviceClient::request(const std::string& method, const std::string& p
 
     DWORD status = 0;
     DWORD statusSize = sizeof(status);
-    WinHttpQueryHeaders(request.handle, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                        WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
+    if (!WinHttpQueryHeaders(request.handle, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                             WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
+                             WINHTTP_NO_HEADER_INDEX)) {
+        result.error = "connection failed";
+        return result;
+    }
     result.status = (int)status;
-    result.transportOk = true;
 
+    static constexpr size_t kMaxResponseBytes = 65536;
     for (;;) {
         DWORD avail = 0;
-        if (!WinHttpQueryDataAvailable(request.handle, &avail) || avail == 0) break;
-        std::string chunk(avail, '\0');
+        if (!WinHttpQueryDataAvailable(request.handle, &avail)) {
+            result.error = "connection interrupted";
+            return result;
+        }
+        if (avail == 0) break;
+        if (result.body.size() >= kMaxResponseBytes) {
+            result.error = "response too large";
+            return result;
+        }
+        size_t toRead = std::min<size_t>(avail, kMaxResponseBytes - result.body.size() + 1);
+        std::string chunk(toRead, '\0');
         DWORD read = 0;
-        if (!WinHttpReadData(request.handle, chunk.data(), avail, &read)) break;
-        chunk.resize(read);
-        result.body += chunk;
-        if (result.body.size() > 65536) break;
+        if (!WinHttpReadData(request.handle, chunk.data(), (DWORD)toRead, &read)) {
+            result.error = "connection interrupted";
+            return result;
+        }
+        if (read == 0) break;
+        if (result.body.size() + read > kMaxResponseBytes) {
+            result.error = "response too large";
+            return result;
+        }
+        result.body.append(chunk.data(), read);
     }
+    result.transportOk = true;
     return result;
 #endif
 }
 
-DeviceStatus DeviceClient::status() const {
+DeviceStatus parseDeviceStatus(const HttpResult& http) {
     DeviceStatus out;
-    HttpResult http = request("GET", "/api/status", "", "");
     if (!http.transportOk) {
         out.message = http.error.empty() ? "connection failed" : http.error;
         return out;
@@ -247,28 +533,77 @@ DeviceStatus DeviceClient::status() const {
         out.message = deviceResultMessage(http);
         return out;
     }
+    JsonValue doc;
+    if (!parseJson(http.body, doc) || doc.type != JsonValue::Object) {
+        out.message = "invalid device response";
+        return out;
+    }
     out.ok = true;
-    out.mode = jsonString(http.body, "mode");
-    out.program = jsonString(http.body, "program");
-    out.unsaved = jsonBool(http.body, "unsaved");
-    out.master = jsonInt(http.body, "brightness", 255);
-    out.palette = jsonString(http.body, "palette");
+    if (const JsonValue* v = doc.field("mode")) out.mode = v->asString();
+    if (const JsonValue* v = doc.field("program")) out.program = v->asString();
+    if (const JsonValue* v = doc.field("unsaved")) out.unsaved = v->asBool();
+    if (const JsonValue* v = doc.field("brightness")) out.master = v->asInt(255);
+    if (const JsonValue* v = doc.field("palette")) out.palette = v->asString();
     if (out.palette.empty()) out.palette = "Rainbow";
-    out.fault = firstDiagnostic(http.body);
+    if (const JsonValue* diags = doc.field("diagnostics");
+        diags && diags->type == JsonValue::Array && !diags->arrVal.empty()) {
+        out.fault = formatDiagObject(diags->arrVal[0]);
+    }
     if (out.fault.empty()) {
-        size_t err = http.body.find("\"error\"");
-        if (err != std::string::npos) {
-            size_t obj = http.body.find('{', err);
-            size_t nul = http.body.find("null", err);
-            if (obj != std::string::npos && (nul == std::string::npos || obj < nul)) {
-                size_t end = http.body.find('}', obj);
-                if (end != std::string::npos) {
-                    out.fault = jsonString(http.body.substr(obj, end - obj + 1), "message");
-                }
+        if (const JsonValue* err = doc.field("error")) {
+            if (err->type == JsonValue::Object) {
+                out.fault = formatDiagObject(*err);
+            } else if (err->type == JsonValue::String) {
+                out.fault = err->strVal;
             }
         }
     }
     return out;
+}
+
+bool parseDevicePrograms(const HttpResult& http, std::vector<DeviceProgram>& out, std::string& error) {
+    out.clear();
+    if (!http.transportOk || http.status != 200) {
+        error = deviceResultMessage(http);
+        return false;
+    }
+    JsonValue doc;
+    if (!parseJson(http.body, doc) || doc.type != JsonValue::Array) {
+        error = "invalid device response";
+        return false;
+    }
+    for (const JsonValue& item : doc.arrVal) {
+        if (item.type != JsonValue::Object) continue;
+        DeviceProgram program;
+        if (const JsonValue* v = item.field("name")) program.name = v->asString();
+        if (const JsonValue* v = item.field("builtin")) program.builtin = v->asBool();
+        if (const JsonValue* v = item.field("bytes")) program.bytes = v->asInt(0);
+        if (const JsonValue* v = item.field("active")) program.active = v->asBool();
+        if (!program.name.empty()) out.push_back(std::move(program));
+    }
+    return true;
+}
+
+bool parseDeviceLed(const HttpResult& http, DeviceLed& out, std::string& error) {
+    if (!http.transportOk || http.status != 200) {
+        error = deviceResultMessage(http);
+        return false;
+    }
+    JsonValue doc;
+    if (!parseJson(http.body, doc) || doc.type != JsonValue::Object) {
+        error = "invalid device response";
+        return false;
+    }
+    if (const JsonValue* v = doc.field("type")) out.type = v->asString(out.type);
+    if (const JsonValue* v = doc.field("order")) out.order = v->asString(out.order);
+    if (const JsonValue* v = doc.field("length")) out.length = v->asInt(out.length);
+    if (const JsonValue* v = doc.field("pin")) out.pin = v->asInt(out.pin);
+    if (const JsonValue* v = doc.field("brightness")) out.brightness = v->asInt(out.brightness);
+    return true;
+}
+
+DeviceStatus DeviceClient::status() const {
+    return parseDeviceStatus(request("GET", "/api/status", "", ""));
 }
 
 HttpResult DeviceClient::runSource(const std::string& source) const {
@@ -276,46 +611,25 @@ HttpResult DeviceClient::runSource(const std::string& source) const {
 }
 
 HttpResult DeviceClient::upload(const std::string& name, const std::string& source, bool activate) const {
-    std::string path = "/api/program?name=" + name;
+    std::string path = "/api/program?name=" + urlEncode(name);
     if (activate) path += "&activate=1";
     return request("PUT", path, source, "text/plain");
 }
 
 HttpResult DeviceClient::activate(const std::string& name) const {
-    return request("POST", "/api/program/activate?name=" + name, "", "");
+    return request("POST", "/api/program/activate?name=" + urlEncode(name), "", "");
 }
 
 HttpResult DeviceClient::removeProgram(const std::string& name) const {
-    return request("DELETE", "/api/program?name=" + name, "", "");
+    return request("DELETE", "/api/program?name=" + urlEncode(name), "", "");
 }
 
 bool DeviceClient::programs(std::vector<DeviceProgram>& out, std::string& error) const {
-    out.clear();
-    HttpResult http = request("GET", "/api/programs", "", "");
-    if (!http.transportOk || http.status != 200) {
-        error = deviceResultMessage(http);
-        return false;
-    }
-    size_t i = 0;
-    while (i < http.body.size()) {
-        size_t begin = http.body.find('{', i);
-        if (begin == std::string::npos) break;
-        size_t end = http.body.find('}', begin);
-        if (end == std::string::npos) break;
-        std::string obj = http.body.substr(begin, end - begin + 1);
-        DeviceProgram program;
-        program.name = jsonString(obj, "name");
-        program.builtin = jsonBool(obj, "builtin");
-        program.bytes = jsonInt(obj, "bytes", 0);
-        program.active = jsonBool(obj, "active");
-        if (!program.name.empty()) out.push_back(program);
-        i = end + 1;
-    }
-    return true;
+    return parseDevicePrograms(request("GET", "/api/programs", "", ""), out, error);
 }
 
 bool DeviceClient::programSource(const std::string& name, std::string& out, std::string& error) const {
-    HttpResult http = request("GET", "/api/program?name=" + name, "", "");
+    HttpResult http = request("GET", "/api/program?name=" + urlEncode(name), "", "");
     if (!http.transportOk || http.status != 200) {
         error = deviceResultMessage(http);
         return false;
@@ -325,22 +639,12 @@ bool DeviceClient::programSource(const std::string& name, std::string& out, std:
 }
 
 bool DeviceClient::led(DeviceLed& out, std::string& error) const {
-    HttpResult http = request("GET", "/api/led", "", "");
-    if (!http.transportOk || http.status != 200) {
-        error = deviceResultMessage(http);
-        return false;
-    }
-    out.type = jsonString(http.body, "type");
-    out.order = jsonString(http.body, "order");
-    out.length = jsonInt(http.body, "length", out.length);
-    out.pin = jsonInt(http.body, "pin", out.pin);
-    out.brightness = jsonInt(http.body, "brightness", out.brightness);
-    return true;
+    return parseDeviceLed(request("GET", "/api/led", "", ""), out, error);
 }
 
 HttpResult DeviceClient::setPalette(const std::string& name) const {
     std::ostringstream body;
-    body << "{\"palette\":\"" << name << "\"}";
+    body << "{\"palette\":\"" << jsonEscape(name) << "\"}";
     return request("POST", "/api/palette", body.str(), "application/json");
 }
 
@@ -354,7 +658,7 @@ HttpResult DeviceClient::setBrightness(int brightness) const {
 
 HttpResult DeviceClient::putLed(const DeviceLed& led) const {
     std::ostringstream body;
-    body << "{\"type\":\"" << led.type << "\",\"order\":\"" << led.order
+    body << "{\"type\":\"" << jsonEscape(led.type) << "\",\"order\":\"" << jsonEscape(led.order)
          << "\",\"length\":" << led.length << ",\"pin\":" << led.pin
          << ",\"brightness\":" << led.brightness << "}";
     return request("PUT", "/api/led", body.str(), "application/json");
@@ -389,11 +693,14 @@ bool saveDeviceUrl(const std::string& url) {
 
 bool validUserProgramName(const std::string& name) {
     if (name.size() < 1 || name.size() > 23) return false;
-    unsigned char first = (unsigned char)name[0];
-    if (!std::isalpha(first)) return false;
+    char first = name[0];
+    bool startOk = (first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z');
+    if (!startOk) return false;
     for (size_t i = 1; i < name.size(); i++) {
-        unsigned char c = (unsigned char)name[i];
-        if (!std::isalnum(c) && c != '_') return false;
+        char c = name[i];
+        bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '_';
+        if (!ok) return false;
     }
     return !isBuiltinProgramName(name);
 }
@@ -415,17 +722,26 @@ std::string programNameFromPath(const std::string& path) {
 
 std::string deviceResultMessage(const HttpResult& result) {
     if (!result.transportOk) return result.error.empty() ? "connection failed" : result.error;
-    std::string message = jsonString(result.body, "error");
-    std::string diag = firstDiagnostic(result.body);
     std::string out = "device " + std::to_string(result.status);
-    if (!message.empty()) out += " " + message;
-    if (!diag.empty()) out += " " + diag;
+    JsonValue doc;
+    if (parseJson(result.body, doc) && doc.type == JsonValue::Object) {
+        if (const JsonValue* err = doc.field("error"); err && err->type == JsonValue::String && !err->strVal.empty()) {
+            out += " " + err->strVal;
+        }
+        if (const JsonValue* diags = doc.field("diagnostics");
+            diags && diags->type == JsonValue::Array && !diags->arrVal.empty()) {
+            std::string diag = formatDiagObject(diags->arrVal[0]);
+            if (!diag.empty()) out += " " + diag;
+        }
+    }
     return out;
 }
 
 bool deviceWillRestart(const HttpResult& result) {
-    return result.body.find("\"restart\":true") != std::string::npos ||
-           result.body.find("\"restart\": true") != std::string::npos;
+    JsonValue doc;
+    if (!parseJson(result.body, doc) || doc.type != JsonValue::Object) return false;
+    const JsonValue* v = doc.field("restart");
+    return v && v->type == JsonValue::Bool && v->boolVal;
 }
 
 }  // namespace ledbasic
