@@ -1,0 +1,470 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  repo-checks:
+    name: Repository & Catalog Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate library.json, partitions.csv, and builtin catalog sync
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path(".")
+          errors = []
+
+          # 1. Validate library.json
+          lib_path = root / "library.json"
+          try:
+              lib = json.loads(lib_path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              errors.append(f"library.json is invalid JSON: {exc}")
+              lib = {}
+          for key in ("name", "version", "headers", "dependencies"):
+              if key not in lib:
+                  errors.append(f"library.json missing required key: {key}")
+          header = lib.get("headers")
+          if isinstance(header, str) and not (root / "include" / header).is_file():
+              errors.append(f"library.json header not found: include/{header}")
+
+          # 2. Validate firmware/partitions.csv exists and has required partitions
+          partitions_path = root / "firmware" / "partitions.csv"
+          if not partitions_path.is_file():
+              errors.append("firmware/partitions.csv is missing")
+          else:
+              part_text = partitions_path.read_text(encoding="utf-8")
+              for required in ("app0", "spiffs"):
+                  if required not in part_text:
+                      errors.append(f"firmware/partitions.csv missing partition: {required}")
+
+          # 3. Verify all 4 builtin program lists stay in sync:
+          #    - examples/bas/<Name>.bas
+          #    - include/BasicExamples/<Name>.h
+          #    - firmware/src/catalog.cpp (kBuiltins)
+          #    - tools/host/DeviceClient.cpp (kBuiltins)
+          bas_files = sorted(p.stem for p in (root / "examples" / "bas").glob("*.bas"))
+          hdr_files = sorted(p.stem for p in (root / "include" / "BasicExamples").glob("*.h"))
+
+          if not bas_files:
+              errors.append("No .bas files found in examples/bas/")
+
+          bas_set = set(bas_files)
+          hdr_set = set(hdr_files)
+          if bas_set != hdr_set:
+              only_bas = sorted(bas_set - hdr_set)
+              only_hdr = sorted(hdr_set - bas_set)
+              if only_bas:
+                  errors.append(f"Missing BasicExamples headers for: {only_bas}")
+              if only_hdr:
+                  errors.append(f"Orphan BasicExamples headers without .bas: {only_hdr}")
+
+          # Verify each BasicExamples/<Name>.h embeds the matching .bas file in namespace <Name>
+          for name in hdr_files:
+              hdr_text = (root / "include" / "BasicExamples" / f"{name}.h").read_text(encoding="utf-8")
+              expected_embed = f'#embed "../../examples/bas/{name}.bas"'
+              if expected_embed not in hdr_text:
+                  errors.append(f"include/BasicExamples/{name}.h missing {expected_embed}")
+              if f"namespace {name}" not in hdr_text:
+                  errors.append(f"include/BasicExamples/{name}.h missing namespace {name}")
+
+          catalog_text = (root / "firmware" / "src" / "catalog.cpp").read_text(encoding="utf-8")
+          catalog_match = re.search(r"kBuiltins\[\]\s*=\s*\{(.*?)\};", catalog_text, re.S)
+          if not catalog_match:
+              errors.append("Could not parse kBuiltins[] in firmware/src/catalog.cpp")
+              catalog_names = []
+          else:
+              catalog_names = re.findall(r'\{"([^"]+)",', catalog_match.group(1))
+              if len(catalog_names) != len(set(catalog_names)):
+                  errors.append("Duplicate entries in firmware/src/catalog.cpp kBuiltins[]")
+
+          dc_text = (root / "tools" / "host" / "DeviceClient.cpp").read_text(encoding="utf-8")
+          dc_match = re.search(r"kBuiltins\[\]\s*=\s*\{(.*?)\};", dc_text, re.S)
+          if not dc_match:
+              errors.append("Could not parse kBuiltins[] in tools/host/DeviceClient.cpp")
+              dc_names = []
+          else:
+              dc_names = re.findall(r'"([^"]+)"', dc_match.group(1))
+              if len(dc_names) != len(set(dc_names)):
+                  errors.append("Duplicate entries in tools/host/DeviceClient.cpp kBuiltins[]")
+
+          if bas_set != set(catalog_names):
+              errors.append(
+                  f"firmware/src/catalog.cpp out of sync with examples/bas: "
+                  f"missing={sorted(bas_set - set(catalog_names))}, "
+                  f"extra={sorted(set(catalog_names) - bas_set)}"
+              )
+          if bas_set != set(dc_names):
+              errors.append(
+                  f"tools/host/DeviceClient.cpp out of sync with examples/bas: "
+                  f"missing={sorted(bas_set - set(dc_names))}, "
+                  f"extra={sorted(set(dc_names) - bas_set)}"
+              )
+
+          if errors:
+              for err in errors:
+                  print(f"::error::{err}", file=sys.stderr)
+              sys.exit(1)
+
+          print(f"OK: library.json valid, partitions.csv valid, {len(bas_files)} builtins in sync across all 4 locations.")
+          PY
+
+  host:
+    name: Host Build & Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: "Set up C++17 + #embed compiler (Linux)"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe() {
+            local cxx="$1"
+            command -v "$cxx" >/dev/null 2>&1 || return 1
+            "$cxx" -std=c++17 -x c++ -fsyntax-only - >/dev/null 2>&1 <<'EOF'
+          const char data[] = {
+          #embed "library.json"
+          , 0};
+          EOF
+          }
+
+          select_compiler() {
+            for pair in \
+              "gcc-16:g++-16" \
+              "gcc-15:g++-15" \
+              "gcc:g++" \
+              "clang-22:clang++-22" \
+              "clang-21:clang++-21" \
+              "clang-20:clang++-20" \
+              "clang-19:clang++-19" \
+              "clang:clang++"
+            do
+              cc="${pair%%:*}"
+              cxx="${pair##*:}"
+              if probe "$cxx"; then
+                echo "Selected compiler supporting #embed: $cxx"
+                "$cxx" --version | head -n 1
+                echo "CC=$cc" >> "$GITHUB_ENV"
+                echo "CXX=$cxx" >> "$GITHUB_ENV"
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          if ! select_compiler; then
+            echo "No preinstalled compiler supports #embed; installing clang-19..."
+            sudo apt-get update
+            sudo apt-get install -y clang-19
+            select_compiler
+          fi
+
+      - name: "Set up C++17 + #embed compiler (macOS)"
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe() {
+            local cxx="$1"
+            [ -x "$cxx" ] || command -v "$cxx" >/dev/null 2>&1 || return 1
+            "$cxx" -std=c++17 -x c++ -fsyntax-only - >/dev/null 2>&1 <<'EOF'
+          const char data[] = {
+          #embed "library.json"
+          , 0};
+          EOF
+          }
+
+          if probe clang++; then
+            echo "Selected system clang++ supporting #embed"
+            clang++ --version | head -n 1
+            echo "CC=clang" >> "$GITHUB_ENV"
+            echo "CXX=clang++" >> "$GITHUB_ENV"
+          else
+            found=0
+            for app in /Applications/Xcode*.app; do
+              [ -d "$app" ] || continue
+              if probe "$app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang++"; then
+                sudo xcode-select -s "$app/Contents/Developer"
+                echo "Selected Xcode at $app"
+                clang++ --version | head -n 1
+                echo "CC=clang" >> "$GITHUB_ENV"
+                echo "CXX=clang++" >> "$GITHUB_ENV"
+                found=1
+                break
+              fi
+            done
+            if [ "$found" -eq 0 ]; then
+              echo "Installing Homebrew llvm for #embed support..."
+              brew install llvm
+              llvm_bin="$(brew --prefix llvm)/bin"
+              echo "$llvm_bin" >> "$GITHUB_PATH"
+              echo "CC=$llvm_bin/clang" >> "$GITHUB_ENV"
+              echo "CXX=$llvm_bin/clang++" >> "$GITHUB_ENV"
+              "$llvm_bin/clang++" --version | head -n 1
+            fi
+          fi
+
+      - name: Set up MSYS2 UCRT64 toolchain (Windows)
+        if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+
+      - name: Configure MSYS2 PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ucrtBin = Join-Path "${{ steps.msys2.outputs.msys2-location }}" "ucrt64\bin"
+          Add-Content -Path $env:GITHUB_PATH -Value $ucrtBin
+          Add-Content -Path $env:GITHUB_ENV -Value "CC=gcc"
+          Add-Content -Path $env:GITHUB_ENV -Value "CXX=g++"
+          & (Join-Path $ucrtBin "g++.exe") --version | Select-Object -First 1
+
+      - name: Configure and build host CLI, TUI, and test suites (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -B tools/build -S tools -DLEDBASIC_BUILD_TUI=ON
+          cmake --build tools/build --parallel
+
+      - name: Configure and build host CLI, TUI, and test suites (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cmake -B tools/build -S tools -G Ninja -DLEDBASIC_BUILD_TUI=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build tools/build --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run native interpreter tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f tools/build/ledbasic_tests.exe ]; then
+            ./tools/build/ledbasic_tests.exe
+          else
+            ./tools/build/ledbasic_tests
+          fi
+
+      - name: Run standalone native test script (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          pwsh -NoProfile -File test/native/run.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compile-check extra library sources and all 63 BasicExamples headers (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$CXX" -std=c++17 -fsyntax-only -Itest/native -Iinclude \
+            src/CommandHandler.cpp \
+            src/VirtualStripDemos.cpp \
+            test/test_param_parsing.cpp
+
+          # Verify every single BasicExamples/*.h header compiles cleanly with #embed
+          tmp="$(mktemp /tmp/all_examples_XXXXXX.cpp)"
+          trap 'rm -f "$tmp"' EXIT
+          for h in include/BasicExamples/*.h; do
+            echo "#include \"BasicExamples/$(basename "$h")\"" >> "$tmp"
+          done
+          "$CXX" -std=c++17 -fsyntax-only -Iinclude "$tmp"
+          echo "All extra library sources and 63 BasicExamples headers compiled cleanly."
+
+      - name: Run headless TUI tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f tools/build/tui/ledbasic_tui_tests.exe ]; then
+            ./tools/build/tui/ledbasic_tui_tests.exe
+          else
+            ./tools/build/tui/ledbasic_tui_tests
+          fi
+
+      - name: Run CLI smoke test and --help checks (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/smoke.sh
+          ./tools/build/ledbasic --help
+          ./tools/build/tui/ledbasic-tui --help
+
+      - name: Run CLI smoke test and --help checks (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          pwsh -NoProfile -File tools/smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & tools\build\ledbasic.exe --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & tools\build\tui\ledbasic-tui.exe --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run all 63 BASIC examples via headless CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe="./tools/build/ledbasic"
+          if [ -f "${exe}.exe" ]; then
+            exe="${exe}.exe"
+          fi
+
+          count=0
+          failed=0
+          for bas in examples/bas/*.bas; do
+            count=$((count + 1))
+            set +e
+            out="$("$exe" run "$bas" --leds 60 --frames 10 --dt 16 2>&1)"
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::Example $bas exited with code $rc"
+              echo "$out"
+              failed=$((failed + 1))
+            fi
+          done
+
+          # Negative check: missing file must return exit code 1
+          set +e
+          "$exe" run examples/bas/__nonexistent__.bas >/dev/null 2>&1
+          neg_rc=$?
+          set -e
+          if [ "$neg_rc" -ne 1 ]; then
+            echo "::error::Expected exit code 1 for missing file, got $neg_rc"
+            failed=$((failed + 1))
+          fi
+
+          if [ "$failed" -ne 0 ]; then
+            echo "$failed example check(s) failed out of $count."
+            exit 1
+          fi
+          echo "All $count BASIC examples parsed, ran 10 frames without error, and lit LEDs."
+
+      - name: Upload host binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-tools-${{ matrix.os }}
+          retention-days: 7
+          path: |
+            tools/build/ledbasic
+            tools/build/ledbasic.exe
+            tools/build/tui/ledbasic-tui
+            tools/build/tui/ledbasic-tui.exe
+
+  firmware:
+    name: ESP32 Firmware & Library Build (PlatformIO)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio
+          key: ${{ runner.os }}-pio-${{ hashFiles('firmware/platformio.ini', 'library.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      - name: Install PlatformIO Core
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio
+          pio --version
+
+      - name: Build ESP32 firmware (esp32dev)
+        run: pio run -d firmware -e esp32dev
+
+      - name: Build LittleFS filesystem image (esp32dev)
+        run: pio run -d firmware -e esp32dev -t buildfs
+
+      - name: Build VirtualStripDemo example sketch (ESP32-S3)
+        shell: bash
+        run: |
+          set -euo pipefail
+          platform_url="$(tr -d '\r' < firmware/platformio.ini | awk -F'=' '/^[[:space:]]*platform[[:space:]]*=/{sub(/^[[:space:]]+/, "", $2); sub(/[[:space:]]+$/, "", $2); print $2; exit}')"
+          if [ -z "$platform_url" ]; then
+            echo "::error::Could not extract platform URL from firmware/platformio.ini"
+            exit 1
+          fi
+
+          proj_dir="$(mktemp -d /tmp/virtualstrip-ci-XXXXXX)"
+          trap 'rm -rf "$proj_dir"' EXIT
+
+          cat > "$proj_dir/platformio.ini" <<EOF
+          [platformio]
+          src_dir = ${GITHUB_WORKSPACE}/examples/VirtualStripDemo
+
+          [env:esp32s3]
+          platform = ${platform_url}
+          board = esp32-s3-devkitc-1
+          framework = arduino
+          build_unflags =
+              -flto
+              -flto=auto
+          lib_deps =
+              symlink://${GITHUB_WORKSPACE}
+              fastled/FastLED@^3.10.0
+          EOF
+
+          pio run -d "$proj_dir" -e esp32s3
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-esp32dev
+          retention-days: 7
+          path: |
+            firmware/.pio/build/esp32dev/firmware.bin
+            firmware/.pio/build/esp32dev/bootloader.bin
+            firmware/.pio/build/esp32dev/partitions.bin
+            firmware/.pio/build/esp32dev/littlefs.bin

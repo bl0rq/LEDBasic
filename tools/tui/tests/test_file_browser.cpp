@@ -10,6 +10,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <aclapi.h>
 #include <sddl.h>
 #else
 #include <sys/stat.h>
@@ -53,19 +54,43 @@ fs::path extraRoot() {
 }
 
 #ifdef _WIN32
-bool setDacl(const fs::path& p, const wchar_t* sddl) {
+bool setDacl(const fs::path& p, const wchar_t* sddl, SECURITY_INFORMATION flags) {
     PSECURITY_DESCRIPTOR sd = nullptr;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &sd, nullptr)) return false;
-    BOOL ok = SetFileSecurityW(p.c_str(), DACL_SECURITY_INFORMATION, sd);
+    BOOL daclPresent = FALSE;
+    BOOL daclDefaulted = FALSE;
+    PACL dacl = nullptr;
+    bool ok = GetSecurityDescriptorDacl(sd, &daclPresent, &dacl, &daclDefaulted) && daclPresent &&
+              SetNamedSecurityInfoW(const_cast<LPWSTR>(p.c_str()), SE_FILE_OBJECT, flags,
+                                    nullptr, nullptr, dacl, nullptr) == ERROR_SUCCESS;
     LocalFree(sd);
-    return ok != FALSE;
+    return ok;
 }
 #endif
 
 // Makes dir unreadable. False when this platform/user can't (e.g. root).
 bool lockDir(const fs::path& dir) {
 #ifdef _WIN32
-    return setDacl(dir, L"D:P(D;OICI;FA;;;WD)");
+    if (!setDacl(dir, L"D:P(D;OICI;FA;;;WD)",
+                 DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION)) {
+        return false;
+    }
+    // Verify the OS actually blocks listing this folder (elevated tokens or
+    // non-NTFS volumes can bypass deny DACLs, like root on POSIX).
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((dir / L"*").c_str(), &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        FindClose(h);
+        setDacl(dir, L"D:(A;OICI;FA;;;WD)",
+                DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION);
+        return false;
+    }
+    if (GetLastError() != ERROR_ACCESS_DENIED) {
+        setDacl(dir, L"D:(A;OICI;FA;;;WD)",
+                DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION);
+        return false;
+    }
+    return true;
 #else
     if (geteuid() == 0) return false;
     return chmod(dir.c_str(), 0) == 0;
@@ -74,7 +99,8 @@ bool lockDir(const fs::path& dir) {
 
 void unlockDir(const fs::path& dir) {
 #ifdef _WIN32
-    setDacl(dir, L"D:(A;OICI;FA;;;WD)");
+    setDacl(dir, L"D:(A;OICI;FA;;;WD)",
+            DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION);
 #else
     chmod(dir.c_str(), 0755);
 #endif
