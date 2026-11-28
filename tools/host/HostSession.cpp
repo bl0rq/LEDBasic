@@ -6,9 +6,6 @@
 #include <fstream>
 #include <sstream>
 
-// Defined by native tests; the Arduino.h mock references this symbol.
-unsigned long ledbasic_mock_millis = 0;
-
 namespace ledbasic {
 
 static String toArduino(const std::string& s) {

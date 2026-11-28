@@ -5,6 +5,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exe="$root/tools/build/tui/ledbasic-tui"
+if [ ! -f "$exe" ] && [ -f "$exe.exe" ]; then
+    exe="$exe.exe"
+fi
 
 if [ ! -f "$exe" ]; then
     echo "ledbasic-tui not found. Build first: tools/build.sh" >&2

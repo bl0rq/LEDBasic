@@ -4,6 +4,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exe="$root/tools/build/ledbasic"
+if [ ! -f "$exe" ] && [ -f "$exe.exe" ]; then
+    exe="$exe.exe"
+fi
 
 if [ ! -f "$exe" ]; then
     echo "Build the host tools first: cmake -B tools/build -S tools && cmake --build tools/build" >&2

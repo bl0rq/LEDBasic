@@ -49,14 +49,22 @@ std::string genericUtf8FromPath(const fs::path& p) {
 }
 
 std::string envUtf8(const char* name) {
+    if (!name || !*name) return std::string();
 #ifdef _WIN32
-    std::wstring wname = fs::path(name).wstring();
-    DWORD n = GetEnvironmentVariableW(wname.c_str(), nullptr, 0);
-    if (n == 0) return std::string();
-    std::wstring value(n, L'\0');
-    n = GetEnvironmentVariableW(wname.c_str(), &value[0], n);
-    value.resize(n);
-    return utf8FromPath(fs::path(value));
+    std::wstring wname = pathFromUtf8(name).wstring();
+    DWORD cap = GetEnvironmentVariableW(wname.c_str(), nullptr, 0);
+    if (cap == 0) return std::string();
+    for (int attempt = 0; attempt < 4; attempt++) {
+        std::wstring value(cap, L'\0');
+        DWORD n = GetEnvironmentVariableW(wname.c_str(), &value[0], cap);
+        if (n == 0) return std::string();
+        if (n < cap) {
+            value.resize(n);
+            return utf8FromPath(fs::path(value));
+        }
+        cap = n;
+    }
+    return std::string();
 #else
     const char* v = std::getenv(name);
     return v ? std::string(v) : std::string();
@@ -68,7 +76,8 @@ std::vector<std::string> utf8Args(int argc, char** argv) {
 #ifdef _WIN32
     int wargc = 0;
     LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
-    if (wargv && wargc == argc) {
+    if (wargv && wargc > 0) {
+        out.reserve((size_t)wargc);
         for (int i = 0; i < wargc; i++) out.push_back(utf8FromPath(fs::path(wargv[i])));
         LocalFree(wargv);
         return out;

@@ -7,8 +7,6 @@
 #include <cstdio>
 #include <cstdlib>
 
-unsigned long ledbasic_mock_millis = 0;
-
 static int gFails = 0;
 static int gPass = 0;
 
