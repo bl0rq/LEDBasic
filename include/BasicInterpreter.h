@@ -549,6 +549,8 @@ public:
     CRGB* getVirtualLeds() { return virtualLeds; }
     bool isReversed() const { return reversed; }
     uint8_t getOutputBrightness() const;
+    int getPalette() const;
+    void setPalette(int index);
 
     void setZOrder(int z) { zOrder = z; }
     void setBlendMode(BlendMode blend) { blendMode = blend; }

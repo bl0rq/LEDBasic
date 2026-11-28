@@ -67,11 +67,12 @@ static uint8_t scale8(uint8_t value, uint8_t scale) {
 }
 
 static PaletteRgb blend(PaletteRgb a, PaletteRgb b, uint8_t towardB) {
-    uint8_t keep = (uint8_t)(255 - towardB);
+    uint16_t weightB = towardB;
+    uint16_t weightA = 256 - weightB;
     PaletteRgb out;
-    out.r = (uint8_t)(scale8(a.r, keep) + scale8(b.r, towardB));
-    out.g = (uint8_t)(scale8(a.g, keep) + scale8(b.g, towardB));
-    out.b = (uint8_t)(scale8(a.b, keep) + scale8(b.b, towardB));
+    out.r = (uint8_t)(((uint16_t)a.r * weightA + (uint16_t)b.r * weightB) >> 8);
+    out.g = (uint8_t)(((uint16_t)a.g * weightA + (uint16_t)b.g * weightB) >> 8);
+    out.b = (uint8_t)(((uint16_t)a.b * weightA + (uint16_t)b.b * weightB) >> 8);
     return out;
 }
 

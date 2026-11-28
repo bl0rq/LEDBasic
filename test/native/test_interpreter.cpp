@@ -36,17 +36,27 @@ static void testPalettes() {
     PaletteRgb mid = paletteColor(heat, 8, 255);
     CHECK(mid.r > cold.r && mid.r < 0x33, "Heat midpoint blends the first two entries");
 
+    int cloud = findPalette("Cloud");
+    PaletteRgb flat = paletteColor(cloud, 24, 255); // midpoint between two {0, 0, 0x8B} entries
+    CHECK(flat.r == 0 && flat.g == 0 && flat.b == 0x8B, "blending identical palette entries does not dip");
+
     CRGB leds[8];
     BasicLEDController c(leds, 8);
     c.setPalette(heat);
     CHECK(c.loadProgram(String(
         "setup\n  brightness(255)\nend\n"
-        "loop(time)\n  setpal(0, 0)\n  setpal(1, 255)\n  show()\nend\n")),
+        "loop(time)\n  setpal(0, 0)\n  setpal(1, 255)\n  setpal(2, 255, 0)\n  setpal(3, 255, 128)\n  show()\nend\n")),
         "setpal program loads");
     c.runSetup();
     c.runLoop(0);
     CHECK(leds[0].r == 0 && leds[0].g == 0 && leds[0].b == 0, "setpal cold pixel");
     CHECK(leds[1].r == 255 && leds[1].g == 255 && leds[1].b == 255, "setpal hot pixel");
+    CHECK(leds[2].r == 0 && leds[2].g == 0 && leds[2].b == 0, "setpal 3-arg zero brightness");
+    CHECK(leds[3].r > 100 && leds[3].r < 140, "setpal 3-arg mid brightness");
+
+    VirtualStrip vs(0, 0, 4);
+    vs.setPalette(heat);
+    CHECK(vs.getPalette() == heat, "VirtualStrip exposes setPalette/getPalette");
 }
 
 static void testParams() {

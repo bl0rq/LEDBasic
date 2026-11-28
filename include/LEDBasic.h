@@ -5,6 +5,7 @@
 // Umbrella header: includes all public library components
 
 #include "BasicInterpreter.h"
+#include "Palettes.h"
 #include "CommandHandler.h"
 #include "VirtualStripDemos.h"
 

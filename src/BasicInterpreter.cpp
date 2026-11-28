@@ -2114,8 +2114,17 @@ uint8_t VirtualStrip::getOutputBrightness() const {
     return controller ? controller->getOutputBrightness() : 255;
 }
 
+int VirtualStrip::getPalette() const {
+    return controller ? controller->getPalette() : 0;
+}
+
+void VirtualStrip::setPalette(int index) {
+    if (controller) controller->setPalette(index);
+}
+
 void VirtualStrip::setRegion(int start, int len) {
     if (len != length) {
+        int savedPalette = getPalette();
         // Need to recreate the virtual LED array
         delete[] virtualLeds;
         delete controller;
@@ -2127,6 +2136,7 @@ void VirtualStrip::setRegion(int start, int len) {
         }
         controller = new BasicLEDController(virtualLeds, length);
         controller->setOwnsPhysicalOutput(false);
+        controller->setPalette(savedPalette);
 
         if (programSource.length() > 0) {
             controller->loadProgram(programSource);
