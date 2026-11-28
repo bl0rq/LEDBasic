@@ -85,6 +85,7 @@ enum TokenType {
     TOK_SETLED,
     TOK_SETCOLOR,
     TOK_SETHSV,
+    TOK_SETPAL,
     TOK_SHOW,
     TOK_CLEAR,
     TOK_FILL,
@@ -407,12 +408,19 @@ private:
     std::vector<Value> slots;
     std::map<String, int> nameToSlot;
     std::map<String, Parameter> parameters;
+    std::vector<String> parameterOrder; // declaration order, for getAllParameters()
     CRGB* leds;
     int numLeds;
     bool showCalled;
     bool ownsPhysicalOutput;
     bool autoShow;
     uint8_t outputBrightness;
+    std::atomic<uint8_t> masterBrightness;
+    std::atomic<int> paletteIndex;
+    // True once this interpreter has set FastLED's brightness (via brightness()
+    // or the master dimmer). Until then a sketch's own setBrightness() is left alone.
+    bool drivesPhysicalBrightness;
+    void applyPhysicalBrightness();
     ASTNode* setupNode;
     ASTNode* loopNode;
     std::vector<Diagnostic> diagnostics;
@@ -484,6 +492,10 @@ public:
     void setAutoShow(bool enable) { autoShow = enable; }
     bool getAutoShow() const { return autoShow; }
     uint8_t getOutputBrightness() const { return outputBrightness; }
+    uint8_t getMasterBrightness() const { return masterBrightness.load(std::memory_order_relaxed); }
+    void setMasterBrightness(uint8_t value);
+    int getPalette() const { return paletteIndex.load(std::memory_order_relaxed); }
+    void setPalette(int index);
 
     // Parameter management
     void addParameter(const Parameter& param);
@@ -537,6 +549,8 @@ public:
     CRGB* getVirtualLeds() { return virtualLeds; }
     bool isReversed() const { return reversed; }
     uint8_t getOutputBrightness() const;
+    int getPalette() const;
+    void setPalette(int index);
 
     void setZOrder(int z) { zOrder = z; }
     void setBlendMode(BlendMode blend) { blendMode = blend; }
@@ -615,6 +629,10 @@ public:
     void setOwnsPhysicalOutput(bool owns);
     void setAutoShow(bool enable);
     uint8_t getOutputBrightness() const;
+    uint8_t getMasterBrightness() const;
+    void setMasterBrightness(uint8_t value);
+    int getPalette() const;
+    void setPalette(int index);
 
     void addParameter(const Parameter& param);
     void setParameterValue(const String& name, const Value& value);

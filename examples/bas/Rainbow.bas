@@ -1,6 +1,3 @@
-# Rainbow — copied from include/BasicExamples/Rainbow.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(20.0, 5.0, 100.0, 1.0)
 param saturation number(255.0, 0.0, 255.0, 5.0)
 param brightness_level number(255.0, 10.0, 255.0, 5.0)

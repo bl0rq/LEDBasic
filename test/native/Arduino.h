@@ -27,8 +27,9 @@ T min(T a, T b) { return a < b ? a : b; }
 template <typename T>
 T max(T a, T b) { return a > b ? a : b; }
 
+inline unsigned long ledbasic_mock_millis = 0;
+
 inline unsigned long millis() {
-    extern unsigned long ledbasic_mock_millis;
     return ledbasic_mock_millis;
 }
 

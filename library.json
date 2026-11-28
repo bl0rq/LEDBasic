@@ -17,7 +17,7 @@
   "license": "MIT",
   "homepage": "https://github.com/bradb/LEDBasic",
   "dependencies": {
-    "fastled/FastLED": "^3.9.0"
+    "fastled/FastLED": "^3.10.0"
   },
   "frameworks": "arduino",
   "platforms": ["espressif32"],

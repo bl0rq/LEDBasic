@@ -1,7 +1,10 @@
 $ErrorActionPreference = "Stop"
 $native = $PSScriptRoot
 $root = (Resolve-Path (Join-Path $native "..\..")).Path
-$src = Join-Path $root "src\BasicInterpreter.cpp"
+$src = @(
+    (Join-Path $root "src\BasicInterpreter.cpp"),
+    (Join-Path $root "src\Palettes.cpp")
+)
 $test = Join-Path $native "test_interpreter.cpp"
 $out = Join-Path $native "test_interpreter.exe"
 
@@ -17,10 +20,12 @@ if (-not $cxx) {
 }
 
 Write-Host "Compiling with $cxx"
+$linkFlags = if ($cxx -eq "g++") { @("-static-libgcc", "-static-libstdc++") } else { @() }
 & $cxx -std=c++17 -O0 -g `
     "-I$native" `
     "-I$(Join-Path $root 'include')" `
     $src $test `
+    $linkFlags `
     -o $out
 
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

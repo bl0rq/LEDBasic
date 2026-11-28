@@ -24,14 +24,108 @@ bool isFuncToken(TokenType t) {
            t == TOK_FLOOR || t == TOK_CEIL || t == TOK_ROUND || t == TOK_MIN ||
            t == TOK_MAX || t == TOK_RANDOM || t == TOK_MAP || t == TOK_MILLIS ||
            t == TOK_DELAY || t == TOK_HSV_TO_RGB || t == TOK_WHEEL ||
-           t == TOK_SETLED || t == TOK_SETCOLOR || t == TOK_SETHSV || t == TOK_SHOW ||
+           t == TOK_SETLED || t == TOK_SETCOLOR || t == TOK_SETHSV || t == TOK_SETPAL || t == TOK_SHOW ||
            t == TOK_CLEAR || t == TOK_FILL || t == TOK_BRIGHTNESS || t == TOK_NUMLED ||
            t == TOK_HSV || t == TOK_RGB || t == TOK_GET_LED_R || t == TOK_GET_LED_G ||
            t == TOK_GET_LED_B || t == TOK_SET_LED || t == TOK_SET_ALL ||
            t == TOK_GET_LED_COUNT;
 }
 
+Color tokenColor(TokenType t) {
+    if (isKeywordToken(t)) return theme::keyword();
+    if (isFuncToken(t)) return theme::func();
+    if (t == TOK_NUMBER || t == TOK_TRUE || t == TOK_FALSE) return theme::number();
+    if (t == TOK_STRING) return theme::string();
+    return theme::fg();
+}
+
+bool isUtf8Cont(unsigned char c) {
+    return (c & 0xC0) == 0x80;
+}
+
+int clampToCodepoint(const std::string& line, int col) {
+    int len = (int)line.size();
+    if (col < 0) return 0;
+    if (col > len) return len;
+    while (col > 0 && col < len && isUtf8Cont((unsigned char)line[(size_t)col])) col--;
+    return col;
+}
+
+int prevCodepoint(const std::string& line, int col) {
+    col = clampToCodepoint(line, col);
+    if (col <= 0) return 0;
+    col--;
+    while (col > 0 && isUtf8Cont((unsigned char)line[(size_t)col])) col--;
+    return col;
+}
+
+int nextCodepoint(const std::string& line, int col) {
+    int len = (int)line.size();
+    col = clampToCodepoint(line, col);
+    if (col >= len) return len;
+    col++;
+    while (col < len && isUtf8Cont((unsigned char)line[(size_t)col])) col++;
+    return col;
+}
+
+int byteIndexForColumn(const std::string& line, int visualCol) {
+    if (visualCol <= 0) return 0;
+    int pos = 0;
+    int len = (int)line.size();
+    for (int i = 0; i < visualCol && pos < len; i++) {
+        pos = nextCodepoint(line, pos);
+    }
+    return pos;
+}
+
 } // namespace
+
+Element highlightBasicLine(const std::string& raw) {
+    BasicLexer lexer(String(raw.c_str()));
+    auto tokens = lexer.tokenize();
+
+    std::vector<Color> cols(raw.size(), theme::fg());
+    std::vector<bool> set(raw.size(), false);
+    for (const auto& tok : tokens) {
+        if (tok.type == TOK_EOF || tok.type == TOK_NEWLINE) continue;
+        int start = tok.column - 1;
+        if (start < 0) start = 0;
+        std::string val = tok.value.c_str();
+        if (tok.type == TOK_STRING) val = std::string("\"") + val + "\"";
+        Color c = tokenColor(tok.type);
+        for (int i = 0; i < (int)val.size(); i++) {
+            int p = start + i;
+            if (p >= 0 && p < (int)raw.size()) {
+                cols[(size_t)p] = c;
+                set[(size_t)p] = true;
+            }
+        }
+    }
+    for (size_t i = 0; i < raw.size(); i++) {
+        if (raw[i] == '#' || (raw[i] == '/' && i + 1 < raw.size() && raw[i + 1] == '/')) {
+            bool inString = set[i] && cols[i] == theme::string();
+            if (!inString) {
+                for (size_t j = i; j < raw.size(); j++) cols[j] = theme::comment();
+                break;
+            }
+        }
+    }
+
+    Elements parts;
+    if (raw.empty()) {
+        parts.push_back(ftxui::text(" "));
+    } else {
+        size_t i = 0;
+        while (i < raw.size()) {
+            Color c = cols[i];
+            size_t j = i + 1;
+            while (j < raw.size() && cols[j] == c) j++;
+            parts.push_back(ftxui::text(raw.substr(i, j - i)) | color(c));
+            i = j;
+        }
+    }
+    return hbox(std::move(parts));
+}
 
 SourceEditor::SourceEditor() {
     lines_.push_back("");
@@ -81,9 +175,7 @@ void SourceEditor::ensureCursor() {
     if (lines_.empty()) lines_.push_back("");
     if (cursorRow_ < 0) cursorRow_ = 0;
     if (cursorRow_ >= (int)lines_.size()) cursorRow_ = (int)lines_.size() - 1;
-    int len = (int)lines_[(size_t)cursorRow_].size();
-    if (cursorCol_ < 0) cursorCol_ = 0;
-    if (cursorCol_ > len) cursorCol_ = len;
+    cursorCol_ = clampToCodepoint(lines_[(size_t)cursorRow_], cursorCol_);
 }
 
 void SourceEditor::pushUndo() {
@@ -117,8 +209,10 @@ void SourceEditor::backspace() {
     ensureCursor();
     if (cursorCol_ > 0) {
         pushUndo();
-        lines_[(size_t)cursorRow_].erase((size_t)cursorCol_ - 1, 1);
-        cursorCol_--;
+        auto& line = lines_[(size_t)cursorRow_];
+        int prev = prevCodepoint(line, cursorCol_);
+        line.erase((size_t)prev, (size_t)(cursorCol_ - prev));
+        cursorCol_ = prev;
         dirty_ = true;
     } else if (cursorRow_ > 0) {
         pushUndo();
@@ -136,7 +230,8 @@ void SourceEditor::del() {
     auto& line = lines_[(size_t)cursorRow_];
     if (cursorCol_ < (int)line.size()) {
         pushUndo();
-        line.erase((size_t)cursorCol_, 1);
+        int next = nextCodepoint(line, cursorCol_);
+        line.erase((size_t)cursorCol_, (size_t)(next - cursorCol_));
         dirty_ = true;
     } else if (cursorRow_ + 1 < (int)lines_.size()) {
         pushUndo();
@@ -168,15 +263,6 @@ bool SourceEditor::toggleBreakpointAtCursor() {
     return breakpoints_.count(line) != 0;
 }
 
-Color SourceEditor::tokenColor(int type) const {
-    auto t = (TokenType)type;
-    if (isKeywordToken(t)) return theme::keyword();
-    if (isFuncToken(t)) return theme::func();
-    if (t == TOK_NUMBER || t == TOK_TRUE || t == TOK_FALSE) return theme::number();
-    if (t == TOK_STRING) return theme::string();
-    return theme::fg();
-}
-
 Element SourceEditor::renderLine(int index, int width) const {
     const std::string& raw = lines_[(size_t)index];
     int line1 = index + 1;
@@ -195,55 +281,11 @@ Element SourceEditor::renderLine(int index, int width) const {
         ftxui::text(num) | color(isCurrent ? theme::accent() : theme::dim())
     );
 
-    Elements parts;
-    BasicLexer lexer(String(raw.c_str()));
-    auto tokens = lexer.tokenize();
-
-    std::vector<Color> cols(raw.size(), theme::fg());
-    std::vector<bool> set(raw.size(), false);
-    for (const auto& tok : tokens) {
-        if (tok.type == TOK_EOF || tok.type == TOK_NEWLINE) continue;
-        int start = tok.column - 1;
-        if (start < 0) start = 0;
-        std::string val = tok.value.c_str();
-        if (tok.type == TOK_STRING) val = std::string("\"") + val + "\"";
-        Color c = tokenColor((int)tok.type);
-        for (int i = 0; i < (int)val.size(); i++) {
-            int p = start + i;
-            if (p >= 0 && p < (int)raw.size()) {
-                cols[(size_t)p] = c;
-                set[(size_t)p] = true;
-            }
-        }
-    }
-    for (size_t i = 0; i < raw.size(); i++) {
-        if (raw[i] == '#' || (raw[i] == '/' && i + 1 < raw.size() && raw[i + 1] == '/')) {
-            bool inString = set[i] && cols[i] == theme::string();
-            if (!inString) {
-                for (size_t j = i; j < raw.size(); j++) cols[j] = theme::comment();
-                break;
-            }
-        }
-    }
-
-    if (raw.empty()) {
-        parts.push_back(ftxui::text(" "));
-    } else {
-        size_t i = 0;
-        while (i < raw.size()) {
-            Color c = cols[i];
-            size_t j = i + 1;
-            while (j < raw.size() && cols[j] == c) j++;
-            parts.push_back(ftxui::text(raw.substr(i, j - i)) | color(c));
-            i = j;
-        }
-    }
-
-    Element body = hbox(std::move(parts));
+    Element body = highlightBasicLine(raw);
     if (isCurrent) body = body | bgcolor(theme::current());
     if (isError) body = body | color(theme::error());
 
-    Element row = hbox(g, body | flex);
+    Element row = hbox(g, body | frame | flex);
     if (index == cursorRow_ && Focused()) {
         row = row | inverted;
     }
@@ -274,19 +316,25 @@ bool SourceEditor::OnEvent(Event event) {
     if (event.is_mouse()) {
         auto m = event.mouse();
         if (!box_.Contain(m.x, m.y)) return false;
+        if (m.button == Mouse::WheelUp || m.button == Mouse::WheelDown) {
+            cursorRow_ += (m.button == Mouse::WheelDown ? 3 : -3);
+            ensureCursor();
+            return true;
+        }
+        if (m.button != Mouse::Left || m.motion != Mouse::Pressed) return false;
         TakeFocus();
         int row = scrollRow_ + (m.y - box_.y_min);
         if (row < 0) row = 0;
         if (row >= (int)lines_.size()) row = (int)lines_.size() - 1;
         cursorRow_ = row;
         int localX = m.x - box_.x_min;
-        if (m.button == Mouse::Left && m.motion == Mouse::Pressed && localX <= 1) {
+        if (localX <= 1) {
             toggleBreakpointAtCursor();
             return true;
         }
         int col = localX - 7;
         if (col < 0) col = 0;
-        cursorCol_ = col;
+        cursorCol_ = byteIndexForColumn(lines_[(size_t)cursorRow_], col);
         ensureCursor();
         return true;
     }
@@ -302,7 +350,8 @@ bool SourceEditor::OnEvent(Event event) {
         return true;
     }
     if (event == Event::ArrowLeft) {
-        if (cursorCol_ > 0) cursorCol_--;
+        ensureCursor();
+        if (cursorCol_ > 0) cursorCol_ = prevCodepoint(lines_[(size_t)cursorRow_], cursorCol_);
         else if (cursorRow_ > 0) {
             cursorRow_--;
             cursorCol_ = (int)lines_[(size_t)cursorRow_].size();
@@ -311,8 +360,9 @@ bool SourceEditor::OnEvent(Event event) {
     }
     if (event == Event::ArrowRight) {
         ensureCursor();
-        if (cursorCol_ < (int)lines_[(size_t)cursorRow_].size()) cursorCol_++;
-        else if (cursorRow_ + 1 < (int)lines_.size()) {
+        if (cursorCol_ < (int)lines_[(size_t)cursorRow_].size()) {
+            cursorCol_ = nextCodepoint(lines_[(size_t)cursorRow_], cursorCol_);
+        } else if (cursorRow_ + 1 < (int)lines_.size()) {
             cursorRow_++;
             cursorCol_ = 0;
         }
@@ -363,7 +413,7 @@ bool SourceEditor::OnEvent(Event event) {
             insert("  ");
             return true;
         }
-        if (!ch.empty() && ch[0] >= 32) {
+        if (!ch.empty() && (unsigned char)ch[0] >= 32) {
             insert(ch);
             return true;
         }

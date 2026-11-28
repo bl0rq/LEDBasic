@@ -1,11 +1,10 @@
 #include "HostSession.h"
+#include "Utf8Path.h"
+#include "Palettes.h"
 
 #include <chrono>
 #include <fstream>
 #include <sstream>
-
-// Defined by native tests; the Arduino.h mock references this symbol.
-unsigned long ledbasic_mock_millis = 0;
 
 namespace ledbasic {
 
@@ -138,6 +137,7 @@ void HostSession::startWorker() {
 void HostSession::captureController(Snapshot& s, std::vector<Diagnostic>& diags) const {
     s.programLoaded = false;
     s.brightness = 255;
+    s.master = 255;
     s.currentLine = 0;
     s.currentColumn = 0;
     s.statementDepth = 0;
@@ -150,6 +150,7 @@ void HostSession::captureController(Snapshot& s, std::vector<Diagnostic>& diags)
 
     s.programLoaded = controller_->isProgramLoaded();
     s.brightness = controller_->getOutputBrightness();
+    s.master = controller_->getMasterBrightness();
     s.currentLine = controller_->getCurrentLine();
     s.currentColumn = controller_->getCurrentColumn();
     s.statementDepth = controller_->getStatementDepth();
@@ -403,7 +404,7 @@ bool HostSession::loadSource(const std::string& source, const std::string& path)
 }
 
 bool HostSession::loadFile(const std::string& path) {
-    std::ifstream in(path);
+    std::ifstream in(pathFromUtf8(path)); // path is UTF-8
     if (!in) {
         requestStopAndWait();
         std::lock_guard<std::mutex> lock(mu_);
@@ -437,6 +438,8 @@ bool HostSession::setLedCount(int n) {
     controller_->setAutoShow(false);
     controller_->setClock(clockMillis, clockDelay, this);
     controller_->setDebugHook(debugHook, this);
+    controller_->setMasterBrightness(master_);
+    controller_->setPalette(palette_);
     bool ok = true;
     if (!source_.empty()) {
         ok = controller_->loadProgram(toArduino(source_));
@@ -543,6 +546,27 @@ void HostSession::clearBreakpoints() {
     std::lock_guard<std::mutex> lock(mu_);
     breakpoints_.clear();
     lastSnap_.breakpoints.clear();
+}
+
+void HostSession::setPalette(int index) {
+    if (index < 0 || index >= paletteCount()) index = 0;
+    std::lock_guard<std::mutex> lock(mu_);
+    palette_ = index;
+    if (controller_) controller_->setPalette(palette_);
+}
+
+int HostSession::palette() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return palette_;
+}
+
+void HostSession::setMasterBrightness(int value) {
+    if (value < 0) value = 0;
+    if (value > 255) value = 255;
+    std::lock_guard<std::mutex> lock(mu_);
+    master_ = (uint8_t)value;
+    if (controller_) controller_->setMasterBrightness(master_);
+    if (state_ != Snapshot::Playing) publishSnapshotLocked();
 }
 
 bool HostSession::setParameter(const std::string& name, float value) {

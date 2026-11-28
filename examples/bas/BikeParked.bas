@@ -1,6 +1,3 @@
-# BikeParked — copied from include/BasicExamples/BikeParked.h
-# Firmware header remains the source of truth for sketches.
-
 param tail_index number(8.0, 0.0, 400.0, 1.0)
 param marker_count number(2.0, 1.0, 10.0, 1.0)
 param parked_red number(64.0, 10.0, 255.0, 1.0)

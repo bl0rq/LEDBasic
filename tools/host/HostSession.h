@@ -40,6 +40,7 @@ struct Snapshot {
     State state = Stopped;
     std::vector<LedPixel> leds;
     uint8_t brightness = 255;
+    uint8_t master = 255;
     unsigned long timeMs = 0;
     int currentLine = 0;
     int currentColumn = 0;
@@ -95,6 +96,9 @@ public:
     void clearBreakpoints();
 
     bool setParameter(const std::string& name, float value);
+    void setMasterBrightness(int value);
+    void setPalette(int index);
+    int palette() const;
     EvalResult evalImmediate(const std::string& text);
 
     Snapshot snapshot() const;
@@ -143,6 +147,8 @@ private:
     unsigned long simTime_ = 0;
     unsigned frameDtMs_ = kDefaultFrameDtMs;
     float speedMul_ = 1.0f;
+    uint8_t master_ = 255;
+    int palette_ = 0;
     std::set<int> breakpoints_;
     std::vector<std::pair<std::string, float>> pendingParams_;
     Snapshot lastSnap_;

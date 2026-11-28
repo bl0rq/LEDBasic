@@ -1,6 +1,3 @@
-# Matrix — copied from include/BasicExamples/Matrix.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(3.0, 1.0, 10.0, 1.0)
 param density number(30.0, 5.0, 80.0, 5.0)
 param tail_length number(4.0, 2.0, 10.0, 1.0)

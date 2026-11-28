@@ -1,6 +1,6 @@
 # LEDBasic
 
-A **BASIC language interpreter** for programming LED animations with [FastLED](https://github.com/FastLED/FastLED). Features virtual strip layering with blend modes, runtime parameter discovery, serial command interface, and 10 ready-to-use example programs. Designed as a PlatformIO library for easy integration into LED projects.
+A **BASIC language interpreter** for programming LED animations with [FastLED](https://github.com/FastLED/FastLED). Features virtual strip layering with blend modes, runtime parameter discovery, serial command interface, and 63 ready-to-use example programs. Designed as a PlatformIO library for easy integration into LED projects.
 
 ## Features
 
@@ -9,9 +9,11 @@ A **BASIC language interpreter** for programming LED animations with [FastLED](h
 - **Virtual Strip Manager** — Layer multiple BASIC programs on overlapping regions of a physical LED strip with Z-ordering and blend modes (replace, add, subtract, multiply, screen). Replace treats black as transparent so lower layers show through.
 - **Serial Command Handler** — Built-in serial interface for switching programs and adjusting parameters at runtime
 - **Standalone Effects** — Optional extras (`#include "Effects.h"`) for color-wheel / demo-reel tests. Not pulled in by `LEDBasic.h`.
-- **Example Programs** — 10 ready-to-use BASIC programs: Rainbow, Breathing, SineWave, DoubleRainbow, Matrix, BackgroundStars, MovingComets, PulsingCenter, BikeParked, BikeRolling
+- **Example Programs** — 63 ready-to-use BASIC programs in `examples/bas`, each available as `BasicExamples/<Name>.h` (Rainbow, Fire, Pacifica, Plasma, Twinkle, ...)
 
 ## Installation
+
+**Compiler requirement:** the `BasicExamples/*.h` headers load their `.bas` files with C23 `#embed`, which needs **GCC 15+ or Clang 19+**. The stock `espressif32` PlatformIO platform ships an older GCC; the firmware in `firmware/` uses the [Tasmota espressif32 platform](https://github.com/tasmota/platform-espressif32) (GCC 15.2). The library sources (`VirtualStripDemos.cpp`) include these headers, so every project building the full LEDBasic library needs one of these compilers.
 
 ### PlatformIO (recommended)
 
@@ -120,7 +122,7 @@ Commands (newline-terminated, no blocking read):
 
 ## Dependencies
 
-- [FastLED](https://github.com/FastLED/FastLED) ^3.9.0
+- [FastLED](https://github.com/FastLED/FastLED) ^3.10.0
 - Arduino framework
 - ESP32 platform (ESP-IDF hardware RNG used when available, falls back to Arduino `random()`)
 
@@ -140,15 +142,45 @@ Write and debug programs in the terminal without a board.
 
 **From VS Code:** `Ctrl+Shift+B` builds, `F5` builds and opens **LEDBasic TUI in a new console window** (Windows Terminal if you have it). It is a terminal app, not a GUI. If an old F5 left the status bar orange, `Shift+F5` stops that session first. Details: [tools/README.md](tools/README.md).
 
-**From a shell:** CMake + a C++17 compiler (MSYS2 `g++` on Windows):
+**From a shell:** CMake + GCC 15+ or Clang 19+ for `#embed` (MSYS2 `g++` on Windows; `g++`/`clang++` on Linux/macOS):
 
 ```
-pwsh -File tools/build.ps1
+pwsh -File tools/build.ps1   # Windows
+tools/build.sh               # Linux/macOS
 tools/build/ledbasic run examples/bas/Rainbow.bas --frames 5 --dump-ascii
 tools/build/tui/ledbasic-tui
 ```
 
 `ledbasic-tui` is a QBasic-inspired TUI: editor, live LED strip, F5 run, F8 step, F9 breakpoints, Immediate window.
+
+## Device firmware
+
+`firmware/` is a PlatformIO image for a classic ESP32. It runs LEDBasic on one strip and serves a setup page and JSON API over Wi-Fi.
+
+A new board opens an access point named `LEDBasic-XXXX` with password `ledbasic`. The page is at http://192.168.4.1. After the board joins a network it is at http://ledbasic.local as well as its station IP. Hold the GPIO17 button for five seconds to forget the network and open the access point again.
+
+From `firmware/`, to flash or update the firmware:
+
+```
+pio run -e esp32dev -t upload
+```
+
+That is all a routine update needs. Stored programs and settings are kept.
+
+On a brand-new board, or to wipe a board whose storage is corrupt, also flash the filesystem image once:
+
+```
+pio run -e esp32dev -t uploadfs
+```
+
+**`uploadfs` replaces the whole LittleFS partition with an empty image and erases every stored user program.** Download any programs you want to keep first (Device > Programs in the TUI, or `GET /api/program?name=<name>`).
+
+Factory LED settings are WS2812, color order GRB, GPIO16, 60 LEDs. Change type, order, length, and pin on the page or with `PUT /api/led`. The 63 programs in `examples/bas` are built in. User programs are stored on the device.
+
+**Security note:** the web UI and JSON API have no authentication or CSRF
+protection. Anyone on the same Wi-Fi network can change settings, upload or
+activate programs, or restart the device. Only run this on a trusted home
+network — do not port-forward or otherwise expose it to the internet.
 
 ## License
 

@@ -1,6 +1,3 @@
-# MovingComets — copied from include/BasicExamples/MovingComets.h
-# Firmware header remains the source of truth for sketches.
-
 setup
   brightness(200)
   clear()

@@ -1,6 +1,3 @@
-# BackgroundStars — copied from include/BasicExamples/BackgroundStars.h
-# Firmware header remains the source of truth for sketches.
-
 setup
   brightness(100)
   clear()

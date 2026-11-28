@@ -1,3 +1,4 @@
+#include "Utf8Path.h"
 #include "HostSession.h"
 
 #include <cstdio>
@@ -5,6 +6,13 @@
 #include <cstring>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 static void printUsage() {
     std::printf("Usage:\n");
@@ -39,36 +47,41 @@ static void printAsciiFrame(int index, unsigned long t, const std::vector<ledbas
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+#endif
+    std::vector<std::string> args = ledbasic::utf8Args(argc, argv);
+    if (args.size() < 2) {
         printUsage();
         return 1;
     }
-    if (std::strcmp(argv[1], "--help") == 0 || std::strcmp(argv[1], "-h") == 0) {
+    if (args[1] == "--help" || args[1] == "-h") {
         printUsage();
         return 0;
     }
-    if (std::strcmp(argv[1], "run") != 0 || argc < 3) {
+    if (args[1] != "run" || args.size() < 3) {
         printUsage();
         return 1;
     }
 
-    const char* path = argv[2];
+    const std::string& pathArg = args[2]; // UTF-8
+    const char* path = pathArg.c_str();
     int leds = ledbasic::HostSession::kDefaultLeds;
     int frames = 5;
     unsigned dt = ledbasic::HostSession::kDefaultFrameDtMs;
     bool ascii = false;
 
-    for (int i = 3; i < argc; i++) {
-        if (std::strcmp(argv[i], "--leds") == 0 && i + 1 < argc) {
-            leds = std::atoi(argv[++i]);
-        } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
-            frames = std::atoi(argv[++i]);
-        } else if (std::strcmp(argv[i], "--dt") == 0 && i + 1 < argc) {
-            dt = (unsigned)std::atoi(argv[++i]);
-        } else if (std::strcmp(argv[i], "--dump-ascii") == 0) {
+    for (size_t i = 3; i < args.size(); i++) {
+        if (args[i] == "--leds" && i + 1 < args.size()) {
+            leds = std::atoi(args[++i].c_str());
+        } else if (args[i] == "--frames" && i + 1 < args.size()) {
+            frames = std::atoi(args[++i].c_str());
+        } else if (args[i] == "--dt" && i + 1 < args.size()) {
+            dt = (unsigned)std::atoi(args[++i].c_str());
+        } else if (args[i] == "--dump-ascii") {
             ascii = true;
         } else {
-            std::fprintf(stderr, "Unknown argument: %s\n", argv[i]);
+            std::fprintf(stderr, "Unknown argument: %s\n", args[i].c_str());
             printUsage();
             return 1;
         }

@@ -1,6 +1,3 @@
-# SineWave — copied from include/BasicExamples/SineWave.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(200.0, 50.0, 1000.0, 10.0)
 param frequency number(0.39, 0.1, 2.0, 0.05)
 param amplitude number(127.0, 50.0, 255.0, 5.0)

@@ -1,6 +1,3 @@
-# PulsingCenter — copied from include/BasicExamples/PulsingCenter.h
-# Firmware header remains the source of truth for sketches.
-
 param color_hue number(200.0, 0.0, 360.0, 5.0)
 param pulse_speed number(50.0, 1.0, 100.0, 1.0)
 param pulse_width number(20.0, 1.0, 50.0, 1.0)

@@ -1,12 +1,10 @@
 #include "BasicInterpreter.h"
+#include "Palettes.h"
 #include "BasicExamples/Rainbow.h"
 #include "BasicExamples/PulsingCenter.h"
 #include "BasicExamples/BikeRolling.h"
-#include "BasicExamples/BackgroundStars.h"
 #include <cstdio>
 #include <cstdlib>
-
-unsigned long ledbasic_mock_millis = 0;
 
 static int gFails = 0;
 static int gPass = 0;
@@ -15,6 +13,50 @@ static int gPass = 0;
     if (cond) { gPass++; } \
     else { gFails++; std::printf("FAIL: %s\n", msg); } \
 } while (0)
+
+static void testPalettes() {
+    int rainbow = findPalette("Rainbow");
+    int heat = findPalette("Heat");
+    CHECK(rainbow == 0, "Rainbow is the default palette");
+    CHECK(heat > 0, "Heat palette exists");
+    CHECK(paletteWraps(rainbow), "Rainbow wraps");
+    CHECK(!paletteWraps(heat), "Heat does not wrap");
+
+    PaletteRgb red = paletteColor(rainbow, 0, 255);
+    CHECK(red.r == 255 && red.g == 0 && red.b == 0, "Rainbow index 0 is red");
+    PaletteRgb wrapped = paletteColor(rainbow, 255, 255);
+    CHECK(wrapped.r > 240 && wrapped.g < 16 && wrapped.b < 16, "Rainbow index 255 wraps toward red");
+
+    PaletteRgb cold = paletteColor(heat, 0, 255);
+    PaletteRgb hot = paletteColor(heat, 255, 255);
+    CHECK(cold.r == 0 && cold.g == 0 && cold.b == 0, "Heat index 0 is black");
+    CHECK(hot.r == 255 && hot.g == 255 && hot.b == 255, "Heat index 255 is white");
+
+    PaletteRgb mid = paletteColor(heat, 8, 255);
+    CHECK(mid.r > cold.r && mid.r < 0x33, "Heat midpoint blends the first two entries");
+
+    int cloud = findPalette("Cloud");
+    PaletteRgb flat = paletteColor(cloud, 24, 255); // midpoint between two {0, 0, 0x8B} entries
+    CHECK(flat.r == 0 && flat.g == 0 && flat.b == 0x8B, "blending identical palette entries does not dip");
+
+    CRGB leds[8];
+    BasicLEDController c(leds, 8);
+    c.setPalette(heat);
+    CHECK(c.loadProgram(String(
+        "setup\n  brightness(255)\nend\n"
+        "loop(time)\n  setpal(0, 0)\n  setpal(1, 255)\n  setpal(2, 255, 0)\n  setpal(3, 255, 128)\n  show()\nend\n")),
+        "setpal program loads");
+    c.runSetup();
+    c.runLoop(0);
+    CHECK(leds[0].r == 0 && leds[0].g == 0 && leds[0].b == 0, "setpal cold pixel");
+    CHECK(leds[1].r == 255 && leds[1].g == 255 && leds[1].b == 255, "setpal hot pixel");
+    CHECK(leds[2].r == 0 && leds[2].g == 0 && leds[2].b == 0, "setpal 3-arg zero brightness");
+    CHECK(leds[3].r > 100 && leds[3].r < 140, "setpal 3-arg mid brightness");
+
+    VirtualStrip vs(0, 0, 4);
+    vs.setPalette(heat);
+    CHECK(vs.getPalette() == heat, "VirtualStrip exposes setPalette/getPalette");
+}
 
 static void testParams() {
     CRGB leds[10];
@@ -36,6 +78,9 @@ end
     CHECK(c.loadProgram(String(src)), "param program loads");
     auto params = c.getAllParameters();
     CHECK(params.size() == 4, "four parameters discovered");
+    CHECK(params.size() == 4 && params[0].name == "speed" && params[1].name == "enabled" &&
+          params[2].name == "offset" && params[3].name == "color_scheme",
+          "parameters listed in declaration order");
 
     Parameter* speed = c.getParameter("speed");
     CHECK(speed && speed->type == PARAM_NUMBER, "speed is number");
@@ -367,6 +412,18 @@ static void testRuntimeDiagnostic() {
         if (diags[i].kind == Diagnostic::Runtime && diags[i].line == 2) saw = true;
     }
     CHECK(saw, "runtime diagnostic is on the for line");
+
+    // Repeated runLoop() on a faulted program must not grow diagnostics without bound.
+    const char* loopErr =
+        "setup\nend\n"
+        "loop(time)\n"
+        "  for i = 0 to 10 step 0\n"
+        "    x = 1\n"
+        "  next\n"
+        "end\n";
+    CHECK(c.loadProgram(String(loopErr)), "faulted loop program loads");
+    for (int i = 0; i < 100; i++) c.runLoop((unsigned long)i);
+    CHECK(c.getDiagnostics().size() <= 64, "runtime diagnostics are capped");
 }
 
 static void testInterruptStopsLoop() {
@@ -400,7 +457,38 @@ static void testInterruptStopsLoop() {
     c.setDebugHook(nullptr, nullptr);
 }
 
+static void testBrightnessResetsBetweenPrograms() {
+    CRGB leds[4];
+    const char* dim = "setup\n  brightness(30)\nend\nloop(time)\n  show()\nend\n";
+    const char* plain = "setup\nend\nloop(time)\n  show()\nend\n";
+
+    // A sketch's own brightness is untouched until the interpreter sets one.
+    FastLED.setBrightness(64);
+    BasicLEDController sketch(leds, 4);
+    CHECK(sketch.loadProgram(String(plain)), "brightness: plain program loads");
+    sketch.runSetup();
+    CHECK(FastLED.brightness == 64, "brightness: sketch brightness kept when no program sets one");
+
+    BasicLEDController c(leds, 4);
+    CHECK(c.loadProgram(String(dim)), "brightness: dim program loads");
+    c.runSetup();
+    CHECK(FastLED.brightness == 30, "brightness: brightness(30) applied");
+
+    CHECK(c.loadProgram(String(plain)), "brightness: plain program reloads");
+    c.runSetup();
+    CHECK(FastLED.brightness == 255, "brightness: next program starts at full, not 30");
+
+    c.setMasterBrightness(128);
+    CHECK(c.loadProgram(String(dim)), "brightness: dim program reloads");
+    c.runSetup();
+    CHECK(FastLED.brightness == 30 * 128 / 255, "brightness: brightness(30) scaled by master");
+    CHECK(c.loadProgram(String(plain)), "brightness: plain program reloads under master");
+    c.runSetup();
+    CHECK(FastLED.brightness == 128, "brightness: next program starts at master, not 30 x master");
+}
+
 int main() {
+    testPalettes();
     testParams();
     testParseFail();
     testReload();
@@ -418,6 +506,7 @@ int main() {
     testSnippetEval();
     testRuntimeDiagnostic();
     testInterruptStopsLoop();
+    testBrightnessResetsBetweenPrograms();
 
     std::printf("%d passed, %d failed\n", gPass, gFails);
     return gFails ? 1 : 0;

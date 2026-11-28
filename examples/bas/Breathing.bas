@@ -1,6 +1,3 @@
-# Breathing — copied from include/BasicExamples/Breathing.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(1000.0, 200.0, 5000.0, 100.0)
 param intensity number(127.0, 50.0, 255.0, 5.0)
 param color_scheme enum(["Blue-Red", "Green-Red", "Yellow"])

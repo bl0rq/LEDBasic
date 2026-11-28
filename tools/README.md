@@ -16,7 +16,7 @@ Workspace files in `.vscode/` wire the TUI into the editor:
 
 `F5` does not open a GUI window — LEDBasic is a terminal app. The default config pops a separate console so it is not buried under Debug Console. If a previous F5 left the status bar orange, press `Shift+F5` first to stop that session.
 
-Needs CMake and a C++17 compiler (`g++` from MSYS2 on Windows is fine). `tools/build.ps1` prepends `C:\msys64\ucrt64\bin` the same way the native tests do.
+Needs CMake and a C++17 compiler with `#embed` support, i.e. GCC 15+ or Clang 19+ (current `g++` from MSYS2 on Windows is fine; check `g++ --version` on Linux/macOS, where distro compilers are often older). `tools/build.ps1` (Windows) / `tools/build.sh` (Linux/macOS) prepend `C:\msys64\ucrt64\bin` the same way the native tests do, where applicable.
 
 ## CLI build
 
@@ -25,7 +25,7 @@ cmake -B tools/build -S tools
 cmake --build tools/build
 ```
 
-Or: `pwsh -File tools/build.ps1`
+Or: `pwsh -File tools/build.ps1` (Windows) / `tools/build.sh` (Linux/macOS)
 
 ## Headless runner
 
@@ -42,11 +42,7 @@ Exit 0 if any pixel lit, 2 if the strip stayed black, 1 on load/runtime error.
 
 ## Examples
 
-`examples/bas/*.bas` are copies of `include/BasicExamples/*.h`. The headers remain the firmware source of truth. Refresh the copies with:
-
-```
-C:\msys64\ucrt64\bin\python.exe tools/_extract_bas.py
-```
+`examples/bas/*.bas` are the source of truth. Each `include/BasicExamples/*.h` pulls its `.bas` file in with `#embed`, so editing a `.bas` file is all it takes; there is nothing to regenerate.
 
 ## TUI
 
@@ -55,11 +51,51 @@ Built by default (`-DLEDBASIC_BUILD_TUI=ON`):
 ```
 tools/build/tui/ledbasic-tui
 tools/build/tui/ledbasic-tui examples/bas/Breathing.bas --leds 120
+tools/build/tui/ledbasic-tui --device http://192.168.4.1
 ```
 
 Run from the repo root so example paths resolve. Windows Terminal (or any UTF-8 truecolor terminal) is recommended.
 
+F5 still runs the simulator on this PC. The Device menu talks to a board running `firmware/` (Windows only; uses WinHTTP). Shift+F5 sends the open editor buffer to the board without storing it. Connect saves the URL in `%APPDATA%\LEDBasic\device.url`. `--device` uses that URL for one launch.
+
+### Open / Save As
+
+Ctrl+O and Ctrl+S (on an untitled buffer) or File > Save As open a file browser modeled on [yazi](https://yazi-rs.github.io/): parent folder, current folder, and a preview of the selection. Any text file can be opened or saved anywhere. The first browse starts in `examples/bas`; after that each dialog starts where you last browsed, opened or saved, for the rest of the session.
+
+| Key | Action |
+|---|---|
+| ↑↓ / j k, PgUp/PgDn, g / G | Move |
+| ← / h / Backspace | Up a folder (cursor lands on the folder you left) |
+| → / l / Enter | Enter a folder, or open the file |
+| `/` | Filter the current folder as you type; Enter keeps it, Esc clears it |
+| `.` | Show/hide hidden files |
+| `~` / `b` | Home folder / `examples/bas` |
+| Ctrl+L or `:` | Type a path: a folder goes there, a file opens |
+| Esc | Clear the filter, else close |
+
+Mouse: click selects, click again opens; one click enters a folder; the wheel scrolls. Going up from a drive root shows the drive list on Windows. Binary files and files over 1 MB are refused.
+
+Save As starts with the cursor in the Name field: type a name (`.bas` is added if there is no extension) and press Enter to save into the current folder. ↑↓ still move the list; Tab switches between the Name field and the list, where Enter on a file copies its name. Saving over a different existing file asks `Overwrite …? y/n`.
+
+## TUI tests
+
+```
+tools/build/tui/ledbasic_tui_tests
+```
+
+No terminal needed. `tui/app.h` builds the whole UI as one FTXUI component (`App`); `main.cpp` only attaches it to the console. The tests send key and mouse events to it and render it into an in-memory screen:
+
+- `tui/tests/test_editor.cpp` — `SourceEditor` editing, navigation, undo, breakpoints, rendering, mouse
+- `tui/tests/test_app.cpp` — the manual checklist below, scripted, plus load errors, Ctrl+N/Ctrl+Q, speed and LED-count keys
+- `tui/tests/test_file_browser.cpp` — `FileBrowserModel` listing order, hidden files, filter, up/enter, errors, previews, drive roots
+- `tui/tests/test_file_menu.cpp` — File menu New/Open/Save/Save As/Exit and the file browser, driven by keys and by clicking labels on the rendered screen; file I/O goes to a temp folder
+- `tui/tests/test_device_client.cpp` — `DeviceClient` URL normalization, JSON parsing, error/diagnostic extraction, and restart detection
+
+The simulator runs on its own thread, so app tests poll with a timeout (`waitFor`) after F5/F8. Live HTTP requests from the Device menu are not exercised; tests run with no device URL.
+
 ## Manual TUI checklist
+
+Automated in `test_app.cpp`, but still worth a look after UI changes:
 
 1. Open `examples/bas/Rainbow.bas` (default)
 2. F5 — LEDs animate

@@ -1,6 +1,3 @@
-# DoubleRainbow — copied from include/BasicExamples/DoubleRainbow.h
-# Firmware header remains the source of truth for sketches.
-
 param speed number(30.0, 10.0, 100.0, 1.0)
 param hue_spread number(180.0, 90.0, 360.0, 10.0)
 param saturation number(255.0, 100.0, 255.0, 5.0)
