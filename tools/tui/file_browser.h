@@ -79,6 +79,7 @@ private:
     ftxui::Box listBox_;
     ftxui::Box nameBox_;
     std::string previewFor_;
+    int previewHeight_ = 0;
     FilePreview preview_;
     std::string parentFor_ = "\x01"; // never a real path, forces the first load
     std::vector<FileEntry> parentEntries_;

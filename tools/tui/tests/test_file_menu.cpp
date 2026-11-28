@@ -337,7 +337,11 @@ void testSaveAsOverwrite() {
     CHECK(clickText(*app, "other.bas") && clickText(*app, "other.bas"), "overwrite: file clicked twice");
     CHECK(app->saveBrowser().name() == "other.bas", "overwrite: picking a file copies its name");
     press(*app, Event::Return);
-    CHECK(contains(frame(*app), "Overwrite other.bas? y/n"), "overwrite: asks first");    CHECK(readFile(other) == "old", "overwrite: nothing written yet");
+    CHECK(contains(frame(*app), "Overwrite other.bas? y/n"), "overwrite: asks first");
+    CHECK(readFile(other) == "old", "overwrite: nothing written yet");
+    // Mouse clicks in the list must be ignored while the overwrite prompt is open.
+    clickText(*app, "other.bas");
+    CHECK(contains(frame(*app), "Overwrite other.bas? y/n"), "overwrite: mouse click does not dismiss prompt");
     press(*app, Event::Character('n'));
     CHECK(app->saveVisible() && readFile(other) == "old", "overwrite: n keeps the old file");
 
@@ -345,6 +349,24 @@ void testSaveAsOverwrite() {
     press(*app, Event::Character('y'));
     CHECK(readFile(other) == app->editor().getText(), "overwrite: y replaces it");
     CHECK(!app->saveVisible(), "overwrite: dialog closes");
+
+    // Reject path separators and folder names without mutating Name to folder.bas.
+    fs::create_directories(tempDir() / "subdir");
+    auto app2 = makeApp("");
+    press(*app2, Event::CtrlS);
+    goTo(*app2, tempDir());
+    clearName(*app2);
+    typeKeys(*app2, "../escape");
+    press(*app2, Event::Return);
+    CHECK(app2->saveVisible() && contains(app2->saveBrowser().status(), "file name"),
+          "save validation: rejects path separators in Name");
+    clearName(*app2);
+    typeKeys(*app2, "subdir");
+    press(*app2, Event::Return);
+    CHECK(app2->saveVisible() && app2->saveBrowser().name() == "subdir" &&
+          contains(app2->saveBrowser().status(), "folder"),
+          "save validation: rejects folder name without appending .bas");
+    press(*app2, Event::Escape);
 }
 
 void testSaveAsSameFileNoPrompt() {

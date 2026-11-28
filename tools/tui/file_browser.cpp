@@ -63,6 +63,8 @@ void FileBrowser::show(const std::string& dir, const std::string& selectName,
     promptText_.clear();
     status_.clear();
     previewFor_ = "\x01";
+    previewHeight_ = 0;
+    parentFor_ = "\x01";
 }
 
 void FileBrowser::setScreenSize(int width, int height) {
@@ -80,7 +82,7 @@ void FileBrowser::activate() {
     const FileEntry* e = model_.selectedEntry();
     if (!e) return;
     if (e->isDir) {
-        model_.enterSelected();
+        if (!model_.enterSelected()) status_ = model_.error();
         return;
     }
     if (mode_ == Mode::Open) {
@@ -106,7 +108,14 @@ void FileBrowser::openFile(const std::string& path) {
 
 void FileBrowser::goToPath(std::string text) {
     if (text.empty()) return;
-    if (text[0] == '~') text = homeDir() + text.substr(1);
+    if (text == "~" || (text.size() >= 2 && text[0] == '~' && (text[1] == '/' || text[1] == '\\'))) {
+        std::string home = homeDir();
+        if (home.empty()) {
+            status_ = "home folder unavailable";
+            return;
+        }
+        text = home + text.substr(1);
+    }
     fs::path p = ledbasic::pathFromUtf8(text);
     if (p.empty()) {
         status_ = "not found: " + text;
@@ -124,18 +133,26 @@ void FileBrowser::goToPath(std::string text) {
     std::string parent = ledbasic::genericUtf8FromPath(fullPath.parent_path());
     std::string file = ledbasic::utf8FromPath(fullPath.filename());
     if (fs::is_regular_file(fullPath, ec)) {
-        model_.chdir(parent);
-        model_.selectName(file);
         if (mode_ == Mode::Open) {
+            model_.chdir(parent);
+            model_.selectName(file);
             openFile(full);
         } else {
+            if (!model_.chdir(parent)) {
+                status_ = model_.error();
+                return;
+            }
+            model_.selectName(file);
             name_ = file;
             nameFocus_ = true;
         }
         return;
     }
     if (mode_ == Mode::Save && fs::is_directory(fullPath.parent_path(), ec)) {
-        model_.chdir(parent);
+        if (!model_.chdir(parent)) {
+            status_ = model_.error();
+            return;
+        }
         name_ = file;
         nameFocus_ = true;
         return;
@@ -152,20 +169,34 @@ void FileBrowser::trySave() {
         status_ = "enter a file name";
         return;
     }
-    if (ledbasic::pathFromUtf8(name_).extension().empty()) name_ += ".bas";
-    std::string target = model_.pathOf(name_);
+    if (name_.find('/') != std::string::npos || name_.find('\\') != std::string::npos ||
+        name_ == "." || name_ == "..") {
+        status_ = "enter a file name (use Ctrl+L for folders)";
+        return;
+    }
     std::error_code ec;
+    std::string candidate = name_;
+    fs::path rawTarget = ledbasic::pathFromUtf8(model_.pathOf(candidate));
+    if (fs::is_directory(rawTarget, ec)) {
+        status_ = candidate + " is a folder";
+        return;
+    }
+    if (ledbasic::pathFromUtf8(candidate).extension().empty()) candidate += ".bas";
+    std::string target = model_.pathOf(candidate);
     fs::path targetPath = ledbasic::pathFromUtf8(target);
     if (fs::is_directory(targetPath, ec)) {
-        status_ = name_ + " is a folder";
+        status_ = candidate + " is a folder";
         return;
     }
     bool same = !currentFile_.empty() && fs::equivalent(targetPath, ledbasic::pathFromUtf8(currentFile_), ec);
-    if (fs::exists(targetPath, ec) && !same) {
+    fs::file_status st = fs::symlink_status(targetPath, ec);
+    bool targetExists = !ec && fs::exists(st);
+    if (targetExists && !same) {
         confirmPath_ = target;
         prompt_ = Prompt::Confirm;
         return;
     }
+    name_ = candidate;
     if (onSave) onSave(target);
 }
 
@@ -252,9 +283,15 @@ bool FileBrowser::handleKey(const Event& e) {
             break;
     }
 
+    auto prefillCwd = [&]() -> std::string {
+        const std::string& cwd = model_.cwd();
+        if (cwd.empty()) return "";
+        return cwd.back() == '/' ? cwd : cwd + "/";
+    };
+
     if (e == Event::CtrlL) {
         prompt_ = Prompt::Path;
-        promptText_ = model_.cwd().empty() ? "" : model_.cwd() + "/";
+        promptText_ = prefillCwd();
         return true;
     }
 
@@ -272,7 +309,11 @@ bool FileBrowser::handleKey(const Event& e) {
     if (is('j')) { model_.move(1); return true; }
     if (e == Event::Home || is('g')) { model_.moveTo(0); return true; }
     if (e == Event::End || is('G')) { model_.moveTo((int)model_.entries().size() - 1); return true; }
-    if (e == Event::ArrowLeft || e == Event::Backspace || is('h')) { model_.up(); return true; }
+    if (e == Event::ArrowLeft || e == Event::Backspace || is('h')) {
+        model_.up();
+        if (!model_.error().empty()) status_ = model_.error();
+        return true;
+    }
     if (e == Event::ArrowRight || e == Event::Return || is('l')) { activate(); return true; }
     if (is('/')) {
         prompt_ = Prompt::Filter;
@@ -281,7 +322,9 @@ bool FileBrowser::handleKey(const Event& e) {
     }
     if (is('.')) { model_.toggleHidden(); return true; }
     if (is('~')) {
-        if (!model_.chdir(homeDir())) status_ = model_.error();
+        std::string home = homeDir();
+        if (home.empty()) status_ = "home folder unavailable";
+        else if (!model_.chdir(home)) status_ = model_.error();
         return true;
     }
     if (is('b')) {
@@ -290,7 +333,7 @@ bool FileBrowser::handleKey(const Event& e) {
     }
     if (is(':')) {
         prompt_ = Prompt::Path;
-        promptText_ = model_.cwd().empty() ? "" : model_.cwd() + "/";
+        promptText_ = prefillCwd();
         return true;
     }
     if (e == Event::Tab && mode_ == Mode::Save) { nameFocus_ = true; return true; }
@@ -300,6 +343,7 @@ bool FileBrowser::handleKey(const Event& e) {
 }
 
 bool FileBrowser::handleMouse(Event e) {
+    if (prompt_ != Prompt::None) return true;
     const Mouse& m = e.mouse();
     if (m.button == Mouse::WheelUp || m.button == Mouse::WheelDown) {
         if (!listBox_.Contain(m.x, m.y)) return false;
@@ -321,7 +365,7 @@ bool FileBrowser::handleMouse(Event e) {
         } else {
             model_.moveTo((int)i);
             const FileEntry* sel = model_.selectedEntry();
-            if (sel && sel->isDir) model_.enterSelected(); // one click enters a folder
+            if (sel && sel->isDir && !model_.enterSelected()) status_ = model_.error();
         }
         return true;
     }
@@ -376,8 +420,9 @@ Element FileBrowser::renderList(int width, int height) {
 
 Element FileBrowser::renderPreview(int width, int height) {
     std::string path = model_.selectedPath();
-    if (path != previewFor_) {
+    if (path != previewFor_ || height != previewHeight_) {
         previewFor_ = path;
+        previewHeight_ = height;
         preview_ = path.empty() ? FilePreview{} : FileBrowserModel::preview(path, height);
     }
     Elements rows;
@@ -424,6 +469,7 @@ Element FileBrowser::renderFooter() {
             break;
     }
     if (!status_.empty()) return text(" " + status_) | color(theme::error());
+    if (!model_.error().empty()) return text(" " + model_.error()) | color(theme::error());
     if (mode_ == Mode::Save) {
         return text(" Enter save  Tab name/list  ↑↓ move  ^L path  Esc cancel") |
                color(theme::dim());

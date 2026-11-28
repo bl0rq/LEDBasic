@@ -43,9 +43,11 @@ bool isDriveRoot(const fs::path& p) {
 
 std::string FileBrowserModel::normalize(const std::string& path) {
     if (path.empty()) return path;
+    fs::path raw = ledbasic::pathFromUtf8(path);
+    if (raw.empty()) return path;
     std::error_code ec;
-    fs::path p = fs::absolute(ledbasic::pathFromUtf8(path), ec);
-    if (ec) p = ledbasic::pathFromUtf8(path);
+    fs::path p = fs::absolute(raw, ec);
+    if (ec) p = raw;
     p = p.lexically_normal();
     std::string s = ledbasic::genericUtf8FromPath(p);
     // "C:/dir/" -> "C:/dir", but keep "C:/" and "/".
@@ -197,8 +199,7 @@ void FileBrowserModel::up() {
 bool FileBrowserModel::enterSelected() {
     const FileEntry* e = selectedEntry();
     if (!e || !e->isDir) return false;
-    chdir(selectedPath());
-    return true;
+    return chdir(selectedPath());
 }
 
 void FileBrowserModel::move(int delta) {
