@@ -405,6 +405,18 @@ static void testRuntimeDiagnostic() {
         if (diags[i].kind == Diagnostic::Runtime && diags[i].line == 2) saw = true;
     }
     CHECK(saw, "runtime diagnostic is on the for line");
+
+    // Repeated runLoop() on a faulted program must not grow diagnostics without bound.
+    const char* loopErr =
+        "setup\nend\n"
+        "loop(time)\n"
+        "  for i = 0 to 10 step 0\n"
+        "    x = 1\n"
+        "  next\n"
+        "end\n";
+    CHECK(c.loadProgram(String(loopErr)), "faulted loop program loads");
+    for (int i = 0; i < 100; i++) c.runLoop((unsigned long)i);
+    CHECK(c.getDiagnostics().size() <= 64, "runtime diagnostics are capped");
 }
 
 static void testInterruptStopsLoop() {

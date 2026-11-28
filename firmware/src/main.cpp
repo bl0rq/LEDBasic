@@ -73,8 +73,10 @@ void loop() {
     netSetBusy(true);
     if (netMeasuring()) {
         outputPaintMeasure(netMeasureEnd());
-    } else if (outputController()) {
+    } else if (outputController() && !outputController()->hasRuntimeError()) {
         outputController()->runLoop(millis());
+    } else {
+        delay(1);
     }
     outputNoteFrame();
     netSetBusy(false);

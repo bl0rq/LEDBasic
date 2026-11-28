@@ -1053,7 +1053,10 @@ void BasicInterpreter::hostDelay(int ms) {
 void BasicInterpreter::runtimeError(ASTNode* node, const String& message) {
     int line = node ? node->token.line : currentLine;
     int col = node ? node->token.column : currentColumn;
-    diagnostics.push_back(Diagnostic(Diagnostic::Runtime, line, col, message));
+    static const size_t kMaxDiagnostics = 64;
+    if (diagnostics.size() < kMaxDiagnostics) {
+        diagnostics.push_back(Diagnostic(Diagnostic::Runtime, line, col, message));
+    }
     Serial.println("Runtime error: " + message);
     abortExecution.store(true, std::memory_order_release);
 }

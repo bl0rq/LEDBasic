@@ -102,7 +102,15 @@ static void pollButton() {
 void netDelay(int ms, void*) {
     uint32_t start = millis();
     while ((int32_t)(millis() - start) < ms) {
+        if (gPending) {
+            if (outputController()) outputController()->interrupt();
+            return;
+        }
         netLoop();
+        if (gPending) {
+            if (outputController()) outputController()->interrupt();
+            return;
+        }
         delay(1);
     }
 }
