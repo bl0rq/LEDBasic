@@ -142,7 +142,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up C++17 + #embed compiler (Linux)
+      - name: "Set up C++17 + #embed compiler (Linux)"
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -188,7 +188,7 @@ jobs:
             select_compiler
           fi
 
-      - name: Set up C++17 + #embed compiler (macOS)
+      - name: "Set up C++17 + #embed compiler (macOS)"
         if: runner.os == 'macOS'
         shell: bash
         run: |
@@ -448,6 +448,9 @@ jobs:
           platform = ${platform_url}
           board = esp32-s3-devkitc-1
           framework = arduino
+          build_unflags =
+              -flto
+              -flto=auto
           lib_deps =
               symlink://${GITHUB_WORKSPACE}
               fastled/FastLED@^3.10.0
