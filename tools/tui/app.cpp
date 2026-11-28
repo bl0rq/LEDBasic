@@ -71,6 +71,20 @@ bool httpOk(const ledbasic::HttpResult& result) {
     return result.transportOk && result.status >= 200 && result.status < 300;
 }
 
+bool parseStrictInt(const std::string& s, int& out) {
+    const char* p = s.c_str();
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '\0') return false;
+    char* end = nullptr;
+    long v = std::strtol(p, &end, 10);
+    if (end == p) return false;
+    while (*end == ' ' || *end == '\t') end++;
+    if (*end != '\0') return false;
+    if (v < -2147483647L - 1L || v > 2147483647L) return false;
+    out = (int)v;
+    return true;
+}
+
 class FocusPad : public ComponentBase {
 public:
     bool Focusable() const override { return true; }
@@ -146,7 +160,9 @@ App::~App() {
 }
 
 void App::start() {
-    if (!device_.baseUrl.empty()) startDeviceJob([this] { refreshDeviceStatus(); });
+    if (!device_.baseUrl.empty()) {
+        startDeviceJob([this](uint64_t epoch) { refreshDeviceStatus(epoch); });
+    }
 }
 
 // ---------------------------------------------------------------- device
@@ -156,20 +172,22 @@ void App::pushLog(const std::string& line) {
     if (immediateLog_.size() > 8) immediateLog_.erase(immediateLog_.begin());
 }
 
-void App::deviceNote(const std::string& line) {
+void App::deviceNote(const std::string& line, uint64_t epoch) {
     std::lock_guard<std::mutex> lock(deviceMu_);
+    if (epoch != deviceEpoch_) return;
     deviceLogs_.push_back(line);
 }
 
-void App::applyDeviceStatus(const ledbasic::DeviceStatus& status) {
+void App::applyDeviceStatus(const ledbasic::DeviceStatus& status, uint64_t epoch, const std::string& url) {
     std::lock_guard<std::mutex> lock(deviceMu_);
+    if (epoch != deviceEpoch_) return;
     if (!status.ok) {
-        deviceStatusLive_ = jobDevice_.baseUrl.empty() ? "device off" : jobDevice_.baseUrl + " offline";
+        deviceStatusLive_ = url.empty() ? "device off" : url + " offline";
         if (!status.message.empty()) deviceLogs_.push_back(status.message);
         return;
     }
     std::string program = status.unsaved ? "unsaved" : status.program;
-    deviceStatusLive_ = jobDevice_.baseUrl + " " + status.mode + " " + program;
+    deviceStatusLive_ = url + " " + status.mode + " " + program;
     // The board's dimmer and palette win over the TUI's controls; the UI
     // thread applies them in drainDeviceResults().
     deviceKnobsMaster_ = status.master;
@@ -178,11 +196,12 @@ void App::applyDeviceStatus(const ledbasic::DeviceStatus& status) {
     if (!status.fault.empty()) deviceLogs_.push_back(status.fault);
 }
 
-void App::refreshDeviceStatus() {
-    applyDeviceStatus(jobDevice_.status());
+void App::refreshDeviceStatus(uint64_t epoch) {
+    applyDeviceStatus(jobDevice_.status(), epoch, jobDevice_.baseUrl);
 }
 
-void App::startDeviceJob(std::function<void()> fn) {
+void App::startDeviceJob(std::function<void(uint64_t)> fn) {
+    uint64_t epoch = 0;
     {
         std::lock_guard<std::mutex> lock(deviceMu_);
         if (deviceBusy_) {
@@ -190,14 +209,15 @@ void App::startDeviceJob(std::function<void()> fn) {
             return;
         }
         deviceBusy_ = true;
+        epoch = deviceEpoch_;
     }
     if (deviceThread_.joinable()) deviceThread_.join();
     // The worker only ever reads this snapshot, never device_, so Connect can
     // change the URL while a job runs, and a multi-request job always talks to
     // the board it started with. Safe to assign: no worker is running here.
     jobDevice_ = device_;
-    deviceThread_ = std::thread([this, fn = std::move(fn)] {
-        fn();
+    deviceThread_ = std::thread([this, epoch, fn = std::move(fn)] {
+        fn(epoch);
         std::lock_guard<std::mutex> lock(deviceMu_);
         deviceBusy_ = false;
     });
@@ -205,45 +225,46 @@ void App::startDeviceJob(std::function<void()> fn) {
 
 void App::runOnDevice() {
     std::string source = editor_->getText();
-    startDeviceJob([this, source] {
+    startDeviceJob([this, source](uint64_t epoch) {
         ledbasic::HttpResult result = jobDevice_.runSource(source);
         if (httpOk(result)) {
-            deviceNote("device running editor buffer");
+            deviceNote("device running editor buffer", epoch);
         } else {
-            deviceNote(ledbasic::deviceResultMessage(result));
+            deviceNote(ledbasic::deviceResultMessage(result), epoch);
         }
-        refreshDeviceStatus();
+        refreshDeviceStatus(epoch);
     });
 }
 
 void App::uploadNamed(const std::string& name) {
     std::string source = editor_->getText();
     if (!ledbasic::validUserProgramName(name)) {
-        startDeviceJob([this, name, source] {
+        startDeviceJob([this, name, source](uint64_t epoch) {
             ledbasic::HttpResult result = jobDevice_.runSource(source);
             if (httpOk(result)) {
-                deviceNote("ran on device, " + name + " was not stored");
+                deviceNote("ran on device, " + name + " was not stored", epoch);
             } else {
-                deviceNote(ledbasic::deviceResultMessage(result));
+                deviceNote(ledbasic::deviceResultMessage(result), epoch);
             }
-            refreshDeviceStatus();
+            refreshDeviceStatus(epoch);
         });
         return;
     }
-    startDeviceJob([this, name, source] {
+    startDeviceJob([this, name, source](uint64_t epoch) {
         ledbasic::HttpResult result = jobDevice_.upload(name, source, true);
         if (httpOk(result)) {
-            deviceNote("device stored " + name);
+            deviceNote("device stored " + name, epoch);
         } else {
-            deviceNote(ledbasic::deviceResultMessage(result));
+            deviceNote(ledbasic::deviceResultMessage(result), epoch);
         }
-        refreshDeviceStatus();
+        refreshDeviceStatus(epoch);
     });
 }
 
 void App::uploadCurrent() {
     std::string name = ledbasic::programNameFromPath(filePath_);
     if (filePath_.empty() || !ledbasic::validUserProgramName(name)) {
+        closeOverlays();
         deviceNameInput_ = name;
         showDeviceName_ = true;
         return;
@@ -251,26 +272,28 @@ void App::uploadCurrent() {
     uploadNamed(name);
 }
 
-void App::fetchPrograms() {
+void App::fetchPrograms(uint64_t epoch) {
     std::vector<ledbasic::DeviceProgram> programs;
     std::string error;
     if (!jobDevice_.programs(programs, error)) {
-        deviceNote(error.empty() ? "could not list programs" : error);
+        deviceNote(error.empty() ? "could not list programs" : error, epoch);
         return;
     }
     std::lock_guard<std::mutex> lock(deviceMu_);
+    if (epoch != deviceEpoch_) return;
     deviceProgramsIncoming_ = std::move(programs);
     deviceProgramsReady_ = true;
 }
 
-void App::fetchLeds() {
+void App::fetchLeds(uint64_t epoch) {
     ledbasic::DeviceLed led;
     std::string error;
     if (!jobDevice_.led(led, error)) {
-        deviceNote(error.empty() ? "could not read LEDs" : error);
+        deviceNote(error.empty() ? "could not read LEDs" : error, epoch);
         return;
     }
     std::lock_guard<std::mutex> lock(deviceMu_);
+    if (epoch != deviceEpoch_) return;
     deviceLedIncoming_ = led;
     deviceLedReady_ = true;
 }
@@ -279,39 +302,41 @@ void App::saveLeds() {
     ledbasic::DeviceLed led = loadedLed_;
     led.type = ledTypeInput_;
     led.order = ledOrderInput_;
-    led.length = std::atoi(ledLengthInput_.c_str());
-    led.pin = std::atoi(ledPinInput_.c_str());
-    led.brightness = std::atoi(ledBrightInput_.c_str());
+    bool intsOk = parseStrictInt(ledLengthInput_, led.length) &&
+                  parseStrictInt(ledPinInput_, led.pin) &&
+                  parseStrictInt(ledBrightInput_, led.brightness);
     bool typeOk = led.type == "ws2812" || led.type == "ws2811";
     bool orderOk = led.order == "RGB" || led.order == "RBG" || led.order == "GRB" ||
                    led.order == "GBR" || led.order == "BRG" || led.order == "BGR";
     bool pinOk = led.pin == 16 || led.pin == 14 || led.pin == 13 || led.pin == 12 ||
                  led.pin == 4 || led.pin == 2;
-    if (!typeOk || !orderOk || led.length < 1 || led.length > 1024 || !pinOk ||
+    if (!intsOk || !typeOk || !orderOk || led.length < 1 || led.length > 1024 || !pinOk ||
         led.brightness < 0 || led.brightness > 255) {
         pushLog("invalid LED settings");
         return;
     }
-    startDeviceJob([this, led] {
+    startDeviceJob([this, led](uint64_t epoch) {
         ledbasic::HttpResult result = jobDevice_.putLed(led);
         if (!httpOk(result)) {
-            deviceNote(ledbasic::deviceResultMessage(result));
+            deviceNote(ledbasic::deviceResultMessage(result), epoch);
             return;
         }
         // The board says when it restarts (hardware change, or leaving
         // length measurement); don't guess from the fields.
         bool restart = ledbasic::deviceWillRestart(result);
         if (restart) {
-            deviceNote("board restarting, reconnect in a few seconds");
+            deviceNote("board restarting, reconnect in a few seconds", epoch);
         } else {
-            deviceNote("brightness " + std::to_string(led.brightness));
+            deviceNote("brightness " + std::to_string(led.brightness), epoch);
         }
         {
             std::lock_guard<std::mutex> lock(deviceMu_);
-            deviceLedIncoming_ = led;
-            deviceLedReady_ = true;
+            if (epoch == deviceEpoch_) {
+                deviceLedIncoming_ = led;
+                deviceLedReady_ = true;
+            }
         }
-        if (!restart) refreshDeviceStatus();
+        if (!restart) refreshDeviceStatus(epoch);
     });
 }
 
@@ -418,7 +443,9 @@ void App::syncDeviceTargets() {
 
     if (deviceRefreshWanted_ && !deviceBusy()) {
         deviceRefreshWanted_ = false;
-        startDeviceJob([this] { refreshDeviceStatus(); });
+        if (!device_.baseUrl.empty()) {
+            startDeviceJob([this](uint64_t epoch) { refreshDeviceStatus(epoch); });
+        }
     }
 
     int pendingBright = deviceBrightTarget_.exchange(-1);
@@ -426,16 +453,20 @@ void App::syncDeviceTargets() {
         if (deviceBusy()) {
             int empty = -1;
             deviceBrightTarget_.compare_exchange_strong(empty, pendingBright);
-        } else {
-            startDeviceJob([this, pendingBright] {
+        } else if (!device_.baseUrl.empty()) {
+            startDeviceJob([this, pendingBright](uint64_t epoch) {
                 int send = pendingBright;
                 for (;;) {
                     ledbasic::HttpResult result = jobDevice_.setBrightness(send);
                     if (!httpOk(result) && result.error.find("requires Windows") == std::string::npos) {
-                        deviceNote(ledbasic::deviceResultMessage(result));
+                        deviceNote(ledbasic::deviceResultMessage(result), epoch);
                     }
                     int next = deviceBrightTarget_.exchange(-1);
                     if (next < 0 || next == send) return;
+                    {
+                        std::lock_guard<std::mutex> lock(deviceMu_);
+                        if (epoch != deviceEpoch_) return;
+                    }
                     send = next;
                 }
             });
@@ -447,16 +478,20 @@ void App::syncDeviceTargets() {
         if (deviceBusy()) {
             int empty = -1;
             devicePaletteTarget_.compare_exchange_strong(empty, pendingPal);
-        } else {
-            startDeviceJob([this, pendingPal] {
+        } else if (!device_.baseUrl.empty()) {
+            startDeviceJob([this, pendingPal](uint64_t epoch) {
                 int send = pendingPal;
                 for (;;) {
                     ledbasic::HttpResult result = jobDevice_.setPalette(paletteName(send));
                     if (!httpOk(result) && result.error.find("requires Windows") == std::string::npos) {
-                        deviceNote(ledbasic::deviceResultMessage(result));
+                        deviceNote(ledbasic::deviceResultMessage(result), epoch);
                     }
                     int next = devicePaletteTarget_.exchange(-1);
                     if (next < 0 || next == send) return;
+                    {
+                        std::lock_guard<std::mutex> lock(deviceMu_);
+                        if (epoch != deviceEpoch_) return;
+                    }
                     send = next;
                 }
             });
@@ -495,18 +530,21 @@ void App::runOrContinue() {
 }
 
 void App::step(bool over) {
-    if (session_.snapshot().state == ledbasic::Snapshot::Stopped) {
+    auto snap = session_.snapshot();
+    bool resumable = snap.state == ledbasic::Snapshot::Paused && !snap.runtimeError &&
+                     editor_->getText() == session_.source();
+    if (!resumable && snap.state != ledbasic::Snapshot::Playing) {
         if (!reloadFromEditor()) return;
     }
     if (over) session_.stepOver();
     else session_.stepInto();
 }
 
-void App::saveTo(const std::string& path) {
+bool App::saveTo(const std::string& path) {
     std::ofstream out(ledbasic::pathFromUtf8(path));
     if (!out) {
         pushLog("could not write " + path);
-        return;
+        return false;
     }
     out << editor_->getText();
     out.close();
@@ -514,26 +552,27 @@ void App::saveTo(const std::string& path) {
         // Disk full or similar: keep the dirty flag so the edits aren't
         // silently dropped on exit.
         pushLog("could not write " + path + " (not saved)");
-        return;
+        return false;
     }
     filePath_ = path;
     editor_->clearDirty();
     pushLog("saved " + path);
+    return true;
 }
 
-void App::doOpen(const std::string& path) {
-    session_.stop();
+bool App::doOpen(const std::string& path) {
     std::ifstream in(ledbasic::pathFromUtf8(path));
     if (!in) {
         pushLog("could not open " + path);
-        return;
+        return false;
     }
     std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    session_.stop();
     editor_->setText(body);
     filePath_ = path;
     session_.clearBreakpoints();
     editor_->setBreakpoints({});
-    if (!session_.loadFile(path)) {
+    if (!session_.loadSource(editor_->getText(), path)) {
         auto diags = session_.diagnostics();
         if (!diags.empty()) {
             editor_->setErrorLine(diags[0].line);
@@ -544,10 +583,14 @@ void App::doOpen(const std::string& path) {
         editor_->setErrorLine(0);
         pushLog("opened " + path);
     }
+    return true;
 }
 
 void App::doNew() {
     session_.stop();
+    session_.clearBreakpoints();
+    editor_->setBreakpoints({});
+    editor_->setErrorLine(0);
     editor_->setText("setup\nend\n\nloop(time)\n  show()\nend\n");
     filePath_.clear();
     session_.loadSource(editor_->getText(), "");
@@ -578,14 +621,14 @@ void App::rememberFile(const std::string& path) {
 }
 
 void App::showOpenDialog() {
-    closeMenus();
+    closeOverlays();
     openBrowser_->show(browseDir_, lastFileInBrowseDir(), filePath_);
     showOpen_ = true;
     openBrowser_->TakeFocus();
 }
 
 void App::showSaveDialog() {
-    closeMenus();
+    closeOverlays();
     std::string name = filePath_.empty() ? "untitled.bas" : ledbasic::utf8FromPath(ledbasic::pathFromUtf8(filePath_).filename());
     saveBrowser_->show(browseDir_, lastFileInBrowseDir(), filePath_, name);
     showSaveAs_ = true;
@@ -607,7 +650,7 @@ void App::onImmediateEnter() {
         return;
     }
     auto r = session_.evalImmediate(cmd);
-    pushLog("? " + cmd);
+    pushLog(cmd[0] == '?' ? cmd : "? " + cmd);
     pushLog(r.text);
 }
 
@@ -647,7 +690,7 @@ Components App::buildOverlays() {
     auto debugBtn = menuBtn(" Debug ", [this] { toggleMenu(&showDebugMenu_); });
     auto deviceBtn = menuBtn(" Device ", [this] { toggleMenu(&showDeviceMenu_); });
     auto helpBtn = menuBtn(" Help ", [this] {
-        closeMenus();
+        closeOverlays();
         showHelp_ = true;
     });
     menuBar_ = Container::Horizontal({fileBtn, viewBtn, runBtn, debugBtn, deviceBtn, helpBtn});
@@ -706,7 +749,7 @@ Components App::buildOverlays() {
 
     auto deviceMenu = wrapMenu("Device", Container::Vertical({
         menuBtn(" Connect… ", [this] {
-            closeMenus();
+            closeOverlays();
             deviceUrlInput_ = device_.baseUrl;
             showDeviceConnect_ = true;
         }),
@@ -719,14 +762,14 @@ Components App::buildOverlays() {
             uploadCurrent();
         }),
         menuBtn(" Programs… ", [this] {
-            closeMenus();
+            closeOverlays();
             showDevicePrograms_ = true;
-            startDeviceJob([this] { fetchPrograms(); });
+            startDeviceJob([this](uint64_t epoch) { fetchPrograms(epoch); });
         }),
         menuBtn(" LEDs… ", [this] {
-            closeMenus();
+            closeOverlays();
             showDeviceLeds_ = true;
-            startDeviceJob([this] { fetchLeds(); });
+            startDeviceJob([this](uint64_t epoch) { fetchLeds(epoch); });
         }),
     }));
 
@@ -738,14 +781,41 @@ Components App::buildOverlays() {
             menuBtn(" Save ", [this] {
                 device_.setBaseUrl(deviceUrlInput_);
                 deviceUrlInput_ = device_.baseUrl;
-                if (ledbasic::saveDeviceUrl(device_.baseUrl)) pushLog("saved " + device_.baseUrl);
-                else pushLog("could not save device url");
+                {
+                    std::lock_guard<std::mutex> lock(deviceMu_);
+                    deviceEpoch_++;
+                    deviceLogs_.clear();
+                    deviceProgramsReady_ = false;
+                    deviceLedReady_ = false;
+                    deviceKnobsReady_ = false;
+                    deviceOpenReady_ = false;
+                    deviceStatusLive_.clear();
+                }
+                deviceBrightTarget_.store(-1);
+                devicePaletteTarget_.store(-1);
+                if (ledbasic::saveDeviceUrl(device_.baseUrl)) {
+                    pushLog(device_.baseUrl.empty() ? "device disconnected" : "saved " + device_.baseUrl);
+                } else {
+                    pushLog("could not save device url");
+                }
                 showDeviceConnect_ = false;
-                // Started by syncDeviceTargets() once any running job (which
-                // may still be talking to the old URL) has finished.
-                deviceRefreshWanted_ = true;
+                if (device_.baseUrl.empty()) {
+                    deviceLine_ = "device off";
+                    deviceRefreshWanted_ = false;
+                } else {
+                    deviceLine_ = device_.baseUrl;
+                    // Started by syncDeviceTargets() once any running job (which
+                    // may still be talking to the old URL) has finished.
+                    deviceRefreshWanted_ = true;
+                }
             }),
-            menuBtn(" Status ", [this] { startDeviceJob([this] { refreshDeviceStatus(); }); }),
+            menuBtn(" Status ", [this] {
+                ledbasic::DeviceClient probe;
+                probe.setBaseUrl(deviceUrlInput_);
+                startDeviceJob([this, probe](uint64_t epoch) {
+                    applyDeviceStatus(probe.status(), epoch, probe.baseUrl);
+                });
+            }),
             menuBtn(" Close ", [this] { showDeviceConnect_ = false; }),
         }),
     }), 52);
@@ -805,29 +875,30 @@ Components App::buildOverlays() {
                 const ledbasic::DeviceProgram* program = selectedProgram();
                 if (!program) return;
                 std::string name = program->name;
-                startDeviceJob([this, name] {
+                startDeviceJob([this, name](uint64_t epoch) {
                     ledbasic::HttpResult result = jobDevice_.activate(name);
                     if (httpOk(result)) {
-                        deviceNote("device running " + name);
+                        deviceNote("device running " + name, epoch);
                     } else {
-                        deviceNote(ledbasic::deviceResultMessage(result));
+                        deviceNote(ledbasic::deviceResultMessage(result), epoch);
                     }
-                    refreshDeviceStatus();
-                    fetchPrograms();
+                    refreshDeviceStatus(epoch);
+                    fetchPrograms(epoch);
                 });
             }),
             menuBtn(" Open ", [this, selectedProgram] {
                 const ledbasic::DeviceProgram* program = selectedProgram();
                 if (!program) return;
                 std::string name = program->name;
-                startDeviceJob([this, name] {
+                startDeviceJob([this, name](uint64_t epoch) {
                     std::string source;
                     std::string error;
                     if (!jobDevice_.programSource(name, source, error)) {
-                        deviceNote(error.empty() ? "could not open program" : error);
+                        deviceNote(error.empty() ? "could not open program" : error, epoch);
                         return;
                     }
                     std::lock_guard<std::mutex> lock(deviceMu_);
+                    if (epoch != deviceEpoch_) return;
                     deviceOpenName_ = name;
                     deviceOpenSource_ = std::move(source);
                     deviceOpenReady_ = true;
@@ -841,18 +912,18 @@ Components App::buildOverlays() {
                     return;
                 }
                 std::string name = program->name;
-                startDeviceJob([this, name] {
+                startDeviceJob([this, name](uint64_t epoch) {
                     ledbasic::HttpResult result = jobDevice_.removeProgram(name);
                     if (httpOk(result)) {
-                        deviceNote("deleted " + name);
+                        deviceNote("deleted " + name, epoch);
                     } else {
-                        deviceNote(ledbasic::deviceResultMessage(result));
+                        deviceNote(ledbasic::deviceResultMessage(result), epoch);
                     }
-                    refreshDeviceStatus();
-                    fetchPrograms();
+                    refreshDeviceStatus(epoch);
+                    fetchPrograms(epoch);
                 });
             }),
-            menuBtn(" Refresh ", [this] { startDeviceJob([this] { fetchPrograms(); }); }),
+            menuBtn(" Refresh ", [this] { startDeviceJob([this](uint64_t epoch) { fetchPrograms(epoch); }); }),
             menuBtn(" Close ", [this] { showDevicePrograms_ = false; }),
         }),
     }), 56);
@@ -871,7 +942,7 @@ Components App::buildOverlays() {
         Renderer([] { return text(" brightness 0-255") | color(theme::dim()); }),
         Input(&ledBrightInput_, "128"),
         Container::Horizontal({
-            menuBtn(" Load ", [this] { startDeviceJob([this] { fetchLeds(); }); }),
+            menuBtn(" Load ", [this] { startDeviceJob([this](uint64_t epoch) { fetchLeds(epoch); }); }),
             menuBtn(" Save ", [this] { saveLeds(); }),
             menuBtn(" Close ", [this] { showDeviceLeds_ = false; }),
         }),
@@ -879,8 +950,7 @@ Components App::buildOverlays() {
 
     openBrowser_ = std::make_shared<FileBrowser>(FileBrowser::Mode::Open, examplesDir());
     openBrowser_->onOpen = [this](const std::string& path) {
-        doOpen(path);
-        if (filePath_ == path) {
+        if (doOpen(path)) {
             rememberFile(path);
             showOpen_ = false;
         } else {
@@ -892,8 +962,7 @@ Components App::buildOverlays() {
 
     saveBrowser_ = std::make_shared<FileBrowser>(FileBrowser::Mode::Save, examplesDir());
     saveBrowser_->onSave = [this](const std::string& path) {
-        saveTo(path);
-        if (filePath_ == path && !editor_->dirty()) {
+        if (saveTo(path)) {
             rememberFile(path);
             showSaveAs_ = false;
         } else {
@@ -986,12 +1055,16 @@ Element App::renderWorkspace() {
     auto snap = session_.snapshot();
     editor_->setReadOnly(snap.state == ledbasic::Snapshot::Playing);
     editor_->setCurrentLine(snap.state == ledbasic::Snapshot::Paused ? snap.currentLine : 0);
-    if (snap.runtimeError) editor_->setErrorLine(snap.currentLine);
+    if (snap.runtimeError) {
+        editor_->setErrorLine(snap.currentLine);
+        hadRuntimeError_ = true;
+    } else if (hadRuntimeError_) {
+        editor_->setErrorLine(0);
+        hadRuntimeError_ = false;
+    }
 
-    char title[256];
-    std::snprintf(title, sizeof(title), " %s%s ",
-                  filePath_.empty() ? "untitled.bas" : filePath_.c_str(),
-                  editor_->dirty() ? " *" : "");
+    std::string title = std::string(" ") + (filePath_.empty() ? "untitled.bas" : filePath_) +
+                        (editor_->dirty() ? " * " : " ");
 
     Element menuRow = hbox(Elements{
         menuBar_->Render(),
@@ -1007,10 +1080,11 @@ Element App::renderWorkspace() {
 
     syncDeviceTargets();
 
+    int stripWidth = screenW > 12 ? std::min(120, screenW - 4) : 80;
     Element strip = vbox(Elements{
         text(stripHead) | color(theme::accent()),
         dimmerRow_->Render(),
-        renderStripCells(snap, 80),
+        renderStripCells(snap, stripWidth),
     });
 
     Elements watchLines;
@@ -1026,11 +1100,16 @@ Element App::renderWorkspace() {
         }
     }
     watchLines.push_back(separator());
-    watchLines.push_back(
-        text(paramsFocus_->Focused() ? " Params  (Tab, Left/Right)" : " Params") |
-        bold | color(theme::accent()));
+
+    Elements paramLines;
+    paramLines.push_back(
+        hbox(Elements{
+            text(paramsFocus_->Focused() ? " Params  (Left/Right)" : " Params") |
+                bold | color(theme::accent()),
+            paramsFocus_->Render() | size(WIDTH, EQUAL, 0),
+        }));
     if (snap.parameters.empty()) {
-        watchLines.push_back(text("  (none)") | color(theme::dim()));
+        paramLines.push_back(text("  (none)") | color(theme::dim()));
     } else {
         if (paramIndex_ >= (int)snap.parameters.size()) paramIndex_ = (int)snap.parameters.size() - 1;
         if (paramIndex_ < 0) paramIndex_ = 0;
@@ -1041,21 +1120,23 @@ Element App::renderWorkspace() {
                           (i == paramIndex_ ? ">" : " "), p.name.c_str(), p.value);
             auto line = text(buf);
             if (i == paramIndex_) line = line | inverted;
-            watchLines.push_back(line);
+            paramLines.push_back(line);
         }
-        watchLines.push_back(text("  Left/Right adjust") | color(theme::dim()));
+        paramLines.push_back(text("  Click or Left/Right") | color(theme::dim()));
     }
+    watchLines.push_back(vbox(std::move(paramLines)) | reflect(paramsBox_));
 
     Elements immLines;
-    for (const auto& l : immediateLog_) {
-        immLines.push_back(text(l) | color(theme::dim()));
+    size_t startLog = immediateLog_.size() > 4 ? immediateLog_.size() - 4 : 0;
+    for (size_t i = startLog; i < immediateLog_.size(); i++) {
+        immLines.push_back(text(immediateLog_[i]) | color(theme::dim()));
     }
     if (immLines.empty()) {
         immLines.push_back(text("Type an expression, assignment, RUN, or STOP") | color(theme::dim()));
     }
 
     Element editorPane = vbox(Elements{
-        text(title) | color(theme::dim()),
+        text(title) | color(theme::dim()) | frame,
         separator(),
         editor_->Render() | flex,
     }) | border;
@@ -1091,8 +1172,32 @@ Element App::renderWorkspace() {
 bool App::handleKey(Event e) {
     // The file browser owns the keyboard while open (Esc, Ctrl+L, typing).
     if (showOpen_ || showSaveAs_) return false;
+    if (e == Event::Escape) {
+        if (anyOverlay()) {
+            closeOverlays();
+            return true;
+        }
+        session_.stop();
+        return true;
+    }
+    if (e == Event::CtrlQ) {
+        if (onExit) onExit();
+        return true;
+    }
+    // Never fire global shortcuts or workspace mouse handlers behind another modal/menu.
+    if (anyOverlay()) return false;
+
+    if (e.is_mouse()) {
+        const Mouse& m = e.mouse();
+        if (m.button == Mouse::Left && m.motion == Mouse::Pressed && paramsBox_.Contain(m.x, m.y)) {
+            paramsFocus_->TakeFocus();
+            return true;
+        }
+        return false;
+    }
+
     if (e == Event::F1) {
-        closeMenus();
+        closeOverlays();
         showHelp_ = true;
         return true;
     }
@@ -1108,14 +1213,6 @@ bool App::handleKey(Event e) {
         runOnDevice();
         return true;
     }
-    if (e == Event::Escape) {
-        if (anyOverlay()) {
-            closeOverlays();
-            return true;
-        }
-        session_.stop();
-        return true;
-    }
     if (e == Event::F8) {
         step(false);
         return true;
@@ -1126,10 +1223,6 @@ bool App::handleKey(Event e) {
     }
     if (e == Event::F9) {
         editor_->toggleBreakpointAtCursor();
-        return true;
-    }
-    if (e == Event::CtrlQ) {
-        if (onExit) onExit();
         return true;
     }
     if (e == Event::CtrlS) {
@@ -1147,7 +1240,7 @@ bool App::handleKey(Event e) {
 
     // Single-key shortcuts must not fire while the user types text: in the
     // editor, the Immediate pane, or any dialog's fields.
-    bool typingElsewhere = anyOverlay() || editor_->Focused() || immediateInput_->Focused();
+    bool typingElsewhere = editor_->Focused() || immediateInput_->Focused();
     if (e.is_character() && !typingElsewhere) {
         std::string ch = e.character();
         if (ch == "1") { applySpeed(0.25f); return true; }
@@ -1158,6 +1251,8 @@ bool App::handleKey(Event e) {
 
     auto snap = session_.snapshot();
     if (paramsFocus_->Focused() && !snap.parameters.empty()) {
+        if (paramIndex_ >= (int)snap.parameters.size()) paramIndex_ = (int)snap.parameters.size() - 1;
+        if (paramIndex_ < 0) paramIndex_ = 0;
         if (e == Event::ArrowUp) {
             if (paramIndex_ > 0) paramIndex_--;
             return true;

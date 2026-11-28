@@ -240,6 +240,45 @@ void testF5ContinuesWithCrlfSource() {
     app->session().stop();
 }
 
+void testModalStackingAndNewCleanup() {
+    auto app = makeApp();
+    app->editor().goToLine(kSethsvLine);
+    press(*app, Event::F9);
+    CHECK(app->session().isBreakpoint(kSethsvLine), "cleanup: breakpoint set before New");
+    press(*app, Event::CtrlN);
+    CHECK(app->editor().breakpoints().empty(), "cleanup: Ctrl+N clears editor breakpoints");
+    CHECK(!app->session().isBreakpoint(kSethsvLine), "cleanup: Ctrl+N clears session breakpoints");
+
+    // Global shortcuts must not stack another modal under Help or break Esc.
+    press(*app, Event::F1);
+    CHECK(app->helpVisible(), "modal: F1 opens Help");
+    press(*app, Event::CtrlO);
+    CHECK(!app->openVisible() && app->helpVisible(), "modal: Ctrl+O does not stack Open under Help");
+    press(*app, Event::Escape);
+    CHECK(!app->helpVisible(), "modal: Esc still dismisses Help");
+}
+
+void testParamIndexClampedAndClickable() {
+    auto app = makeApp();
+    // Click Params header to focus it.
+    auto cells = renderCells(*app->root(), kWidth, kHeight);
+    int x = 0, y = 0;
+    CHECK(findText(cells, "Params", &x, &y), "params: header is rendered");
+    press(*app, click(x, y));
+    CHECK(app->paramsFocus()->Focused(), "params: clicking Params focuses it");
+
+    // Move to the 3rd param (index 2), then load a 1-param program and press ArrowRight
+    // *without* rendering first — must clamp paramIndex_ instead of reading out of bounds.
+    press(*app, Event::ArrowDown);
+    press(*app, Event::ArrowDown);
+    CHECK(app->paramIndex() == 2, "params: moved to index 2");
+    app->session().loadSource(
+        "param gain number(5.0, 0.0, 10.0, 1.0)\nsetup\nend\nloop(time)\n  show()\nend\n", "");
+    press(*app, Event::ArrowRight);
+    CHECK(app->paramIndex() == 0, "params: clamped to last valid index before indexing");
+    CHECK(paramValue(*app, "gain") == 6.0f, "params: adjusted clamped param cleanly");
+}
+
 void runAppTests() {
     testManualChecklist();
     testF5AfterEditRestarts();
@@ -247,4 +286,6 @@ void runAppTests() {
     testLoadErrorReported();
     testNewAndExit();
     testSpeedAndLedKeys();
+    testModalStackingAndNewCleanup();
+    testParamIndexClampedAndClickable();
 }

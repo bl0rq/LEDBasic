@@ -69,24 +69,24 @@ private:
     bool handleKey(ftxui::Event e);
 
     void pushLog(const std::string& line);
-    void deviceNote(const std::string& line);
-    void applyDeviceStatus(const ledbasic::DeviceStatus& status);
-    void refreshDeviceStatus();
-    void startDeviceJob(std::function<void()> fn);
+    void deviceNote(const std::string& line, uint64_t epoch);
+    void applyDeviceStatus(const ledbasic::DeviceStatus& status, uint64_t epoch, const std::string& url);
+    void refreshDeviceStatus(uint64_t epoch);
+    void startDeviceJob(std::function<void(uint64_t)> fn);
     void drainDeviceResults();
     void syncDeviceTargets();
     void runOnDevice();
     void uploadNamed(const std::string& name);
     void uploadCurrent();
-    void fetchPrograms();
-    void fetchLeds();
+    void fetchPrograms(uint64_t epoch);
+    void fetchLeds(uint64_t epoch);
     void saveLeds();
 
     bool reloadFromEditor();
     void runOrContinue();
     void step(bool over);
-    void saveTo(const std::string& path);
-    void doOpen(const std::string& path);
+    bool saveTo(const std::string& path);
+    bool doOpen(const std::string& path);
     void doNew();
     void doSave();
     void showOpenDialog();
@@ -133,6 +133,8 @@ private:
     std::string browseDir_;
     std::string lastFile_;
     ftxui::Box screenBox_;
+    ftxui::Box paramsBox_;
+    bool hadRuntimeError_ = false;
 
     std::string deviceUrlInput_;
     std::string deviceNameInput_;
@@ -149,6 +151,7 @@ private:
 
     // Shared with the device worker thread; guarded by deviceMu_.
     std::mutex deviceMu_;
+    uint64_t deviceEpoch_ = 0;
     std::vector<std::string> deviceLogs_;
     bool deviceBusy_ = false;
     bool deviceProgramsReady_ = false;
